@@ -1,8 +1,10 @@
+import { Midi } from "@tonejs/midi";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import {
   ChevronLeft,
   ChevronRight,
+  FileMusic,
   Hand,
   Pause,
   Play,
@@ -14,18 +16,29 @@ import {
 import "./styles.css";
 
 type HandMode = "both" | "left" | "right";
+type NoteHand = "left" | "right";
+
+type PianoNote = {
+  duration: number;
+  hand: NoteHand;
+  midi: number;
+  start: number;
+  trackName: string;
+};
+
+type Song = {
+  beatsPerMeasure: number;
+  duration: number;
+  measures: number;
+  name: string;
+  notes: PianoNote[];
+  tempo: number;
+  tracks: number;
+};
 
 const keyboardStart = 21;
 const keyboardEnd = 108;
-const demoNotes = [
-  { midi: 52, hand: "left", start: 0.6, duration: 1.3 },
-  { midi: 55, hand: "left", start: 1.8, duration: 0.7 },
-  { midi: 64, hand: "right", start: 1.1, duration: 0.5 },
-  { midi: 67, hand: "right", start: 1.2, duration: 1.4 },
-  { midi: 71, hand: "right", start: 1.2, duration: 1.4 },
-  { midi: 74, hand: "right", start: 2.6, duration: 0.7 },
-  { midi: 76, hand: "right", start: 3.0, duration: 0.7 },
-];
+const samplePath = "/samples/Ungarische.mid";
 
 function isBlackKey(midi: number) {
   return [1, 3, 6, 8, 10].includes(midi % 12);
@@ -37,25 +50,121 @@ function noteName(midi: number) {
   return `${names[midi % 12]}${octave}`;
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function parseMidi(buffer: ArrayBuffer, fileName: string): Song {
+  const midi = new Midi(buffer);
+  const firstTempo = midi.header.tempos[0]?.bpm ?? 100;
+  const firstSignature = midi.header.timeSignatures[0]?.timeSignature ?? [4, 4];
+  const beatsPerMeasure = firstSignature[0] * (4 / firstSignature[1]);
+  const tracksWithNotes = midi.tracks.filter((track) => track.notes.length > 0);
+  const trackAveragePitch = tracksWithNotes.map((track) => {
+    const pitchSum = track.notes.reduce((sum, note) => sum + note.midi, 0);
+
+    return pitchSum / track.notes.length;
+  });
+  const splitPitch =
+    trackAveragePitch.length > 1
+      ? (Math.min(...trackAveragePitch) + Math.max(...trackAveragePitch)) / 2
+      : 60;
+
+  const notes = tracksWithNotes
+    .flatMap((track, trackIndex) => {
+      const trackName = track.name || `Spur ${trackIndex + 1}`;
+      const trackHand: NoteHand = trackAveragePitch[trackIndex] <= splitPitch ? "left" : "right";
+
+      return track.notes.map((note) => ({
+        duration: Math.max(note.duration, 0.05),
+        hand: tracksWithNotes.length > 1 ? trackHand : ((note.midi < 60 ? "left" : "right") satisfies NoteHand),
+        midi: note.midi,
+        start: note.time,
+        trackName,
+      }));
+    })
+    .sort((left, right) => left.start - right.start);
+
+  const duration = Math.max(midi.duration, ...notes.map((note) => note.start + note.duration), 1);
+  const secondsPerMeasure = (60 / firstTempo) * beatsPerMeasure;
+
+  return {
+    beatsPerMeasure,
+    duration,
+    measures: Math.max(1, Math.ceil(duration / secondsPerMeasure)),
+    name: fileName,
+    notes,
+    tempo: Math.round(firstTempo),
+    tracks: tracksWithNotes.length,
+  };
+}
+
+function measureToTime(measure: number, song: Song) {
+  return (measure - 1) * (60 / song.tempo) * song.beatsPerMeasure;
+}
+
 function App() {
+  const [song, setSong] = React.useState<Song | null>(null);
   const [isPlaying, setIsPlaying] = React.useState(false);
   const [tempo, setTempo] = React.useState(76);
-  const [fromBar, setFromBar] = React.useState(4);
-  const [toBar, setToBar] = React.useState(8);
+  const [fromBar, setFromBar] = React.useState(1);
+  const [toBar, setToBar] = React.useState(4);
   const [loop, setLoop] = React.useState(true);
   const [handMode, setHandMode] = React.useState<HandMode>("both");
-  const [progress, setProgress] = React.useState(0.38);
+  const [currentTime, setCurrentTime] = React.useState(0);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+
+  const loadMidi = React.useCallback(async (buffer: ArrayBuffer, fileName: string) => {
+    try {
+      const parsedSong = parseMidi(buffer, fileName);
+
+      setSong(parsedSong);
+      setTempo(parsedSong.tempo);
+      setFromBar(1);
+      setToBar(Math.min(parsedSong.measures, 4));
+      setCurrentTime(0);
+      setIsPlaying(false);
+      setLoadError(null);
+    } catch {
+      setLoadError("Die MIDI-Datei konnte nicht gelesen werden.");
+    }
+  }, []);
 
   React.useEffect(() => {
-    if (!isPlaying) {
+    fetch(samplePath)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error("Sample not found");
+        }
+
+        return response.arrayBuffer();
+      })
+      .then((buffer) => loadMidi(buffer, "Ungarische.mid"))
+      .catch(() => setLoadError("Das Demo-MIDI konnte nicht geladen werden."));
+  }, [loadMidi]);
+
+  const loopStart = song ? measureToTime(fromBar, song) : 0;
+  const loopEnd = song ? measureToTime(toBar + 1, song) : 0;
+  const practiceStart = song ? measureToTime(fromBar, song) : 0;
+  const practiceEnd = song ? measureToTime(toBar + 1, song) : 1;
+  const practiceDuration = Math.max(practiceEnd - practiceStart, 1);
+
+  React.useEffect(() => {
+    if (!isPlaying || !song) {
       return undefined;
     }
 
     const interval = window.setInterval(() => {
-      setProgress((current) => {
-        const next = current + 0.006 * (tempo / 76);
-        if (next > 1) {
-          return loop ? 0.2 : 1;
+      setCurrentTime((current) => {
+        const next = current + 0.05 * (tempo / song.tempo);
+        const end = loop ? loopEnd : song.duration;
+
+        if (next >= end) {
+          if (!loop) {
+            window.setTimeout(() => setIsPlaying(false), 0);
+          }
+
+          return loop ? loopStart : song.duration;
         }
 
         return next;
@@ -63,23 +172,70 @@ function App() {
     }, 50);
 
     return () => window.clearInterval(interval);
-  }, [isPlaying, loop, tempo]);
+  }, [isPlaying, loop, loopEnd, loopStart, song, tempo]);
 
-  const visibleNotes = demoNotes.filter((note) => {
-    const handMatches =
-      handMode === "both" ||
-      (handMode === "left" && note.hand === "left") ||
-      (handMode === "right" && note.hand === "right");
-    const cursorTime = progress * 4;
+  React.useEffect(() => {
+    if (!song) {
+      return;
+    }
 
-    return handMatches && cursorTime >= note.start && cursorTime <= note.start + note.duration;
-  });
+    setFromBar((bar) => clamp(bar, 1, song.measures));
+    setToBar((bar) => clamp(Math.max(bar, fromBar), 1, song.measures));
+  }, [fromBar, song]);
 
-  const activeMidiNotes = new Set(visibleNotes.map((note) => note.midi));
+  const visibleNotes =
+    song?.notes.filter((note) => {
+      const handMatches =
+        handMode === "both" ||
+        (handMode === "left" && note.hand === "left") ||
+        (handMode === "right" && note.hand === "right");
+
+      return handMatches && note.start + note.duration >= practiceStart - 1 && note.start <= practiceEnd + 1;
+    }) ?? [];
+  const activeNotes = visibleNotes.filter((note) => currentTime >= note.start && currentTime <= note.start + note.duration);
+  const activeMidiNotes = new Set(activeNotes.map((note) => note.midi));
+  const rulerBars = Array.from({ length: song?.measures ?? 12 }, (_, index) => index + 1).slice(0, 48);
+  const playheadLeft = song ? clamp(((currentTime - practiceStart) / practiceDuration) * 100, 0, 100) : 0;
   const whiteKeys = Array.from({ length: keyboardEnd - keyboardStart + 1 }, (_, index) => keyboardStart + index).filter(
     (midi) => !isBlackKey(midi),
   );
   const allKeys = Array.from({ length: keyboardEnd - keyboardStart + 1 }, (_, index) => keyboardStart + index);
+
+  function handlePlayPause() {
+    if (!song) {
+      return;
+    }
+
+    if (!isPlaying && (currentTime < loopStart || currentTime >= loopEnd)) {
+      setCurrentTime(loopStart);
+    }
+
+    setIsPlaying((value) => !value);
+  }
+
+  function handleStop() {
+    setIsPlaying(false);
+    setCurrentTime(loopStart);
+  }
+
+  function jumpMeasure(direction: -1 | 1) {
+    if (!song) {
+      return;
+    }
+
+    const secondsPerMeasure = measureToTime(2, song);
+    setCurrentTime((time) => clamp(time + secondsPerMeasure * direction, 0, song.duration));
+  }
+
+  async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    await loadMidi(await file.arrayBuffer(), file.name);
+  }
 
   return (
     <main className="app-shell">
@@ -88,28 +244,21 @@ function App() {
           <span className="brand-mark">PG</span>
           <div>
             <h1>Piano Guide</h1>
-            <p>Ungarische.mid</p>
+            <p>{song?.name ?? "MIDI wird geladen"}</p>
           </div>
         </div>
 
         <div className="transport" aria-label="Transport">
-          <button className="icon-button" onClick={() => setIsPlaying((value) => !value)} title="Start/Pause">
+          <button className="icon-button" disabled={!song} onClick={handlePlayPause} title="Start/Pause">
             {isPlaying ? <Pause size={20} /> : <Play size={20} />}
           </button>
-          <button
-            className="icon-button"
-            onClick={() => {
-              setIsPlaying(false);
-              setProgress(0.2);
-            }}
-            title="Stop"
-          >
+          <button className="icon-button" disabled={!song} onClick={handleStop} title="Stop">
             <Square size={18} />
           </button>
-          <button className="icon-button" onClick={() => setProgress((value) => Math.max(0, value - 0.06))} title="Takt zurueck">
+          <button className="icon-button" disabled={!song} onClick={() => jumpMeasure(-1)} title="Takt zurueck">
             <ChevronLeft size={20} />
           </button>
-          <button className="icon-button" onClick={() => setProgress((value) => Math.min(1, value + 0.06))} title="Takt vor">
+          <button className="icon-button" disabled={!song} onClick={() => jumpMeasure(1)} title="Takt vor">
             <ChevronRight size={20} />
           </button>
         </div>
@@ -120,8 +269,19 @@ function App() {
           <label className="file-button">
             <Upload size={18} />
             MIDI waehlen
-            <input type="file" accept=".mid,.midi" />
+            <input type="file" accept=".mid,.midi,audio/midi" onChange={handleFileChange} />
           </label>
+
+          {loadError && <div className="error-message">{loadError}</div>}
+
+          <div className="song-facts">
+            <span>
+              <FileMusic size={16} />
+              {song ? `${song.notes.length} Noten` : "Keine Noten geladen"}
+            </span>
+            <span>{song ? `${song.tracks} Spuren` : "0 Spuren"}</span>
+            <span>{song ? `${song.measures} Takte` : "0 Takte"}</span>
+          </div>
 
           <div className="field">
             <span>Tempo</span>
@@ -135,11 +295,23 @@ function App() {
           <div className="field two-columns">
             <label>
               Von Takt
-              <input min="1" type="number" value={fromBar} onChange={(event) => setFromBar(Number(event.target.value))} />
+              <input
+                min="1"
+                max={song?.measures ?? 1}
+                type="number"
+                value={fromBar}
+                onChange={(event) => setFromBar(clamp(Number(event.target.value), 1, song?.measures ?? 1))}
+              />
             </label>
             <label>
               Bis Takt
-              <input min={fromBar} type="number" value={toBar} onChange={(event) => setToBar(Number(event.target.value))} />
+              <input
+                min={fromBar}
+                max={song?.measures ?? fromBar}
+                type="number"
+                value={toBar}
+                onChange={(event) => setToBar(clamp(Number(event.target.value), fromBar, song?.measures ?? fromBar))}
+              />
             </label>
           </div>
 
@@ -171,13 +343,23 @@ function App() {
         </aside>
 
         <section className="practice-view" aria-label="Uebebereich">
-          <div className="measure-ruler">
-            {Array.from({ length: 12 }, (_, index) => index + 1).map((bar) => (
-              <span key={bar} className={bar >= fromBar && bar <= toBar ? "loop-bar" : ""}>
+          <div className="measure-ruler" style={{ gridTemplateColumns: `repeat(${rulerBars.length}, minmax(42px, 1fr))` }}>
+            {rulerBars.map((bar) => (
+              <button
+                key={bar}
+                className={bar >= fromBar && bar <= toBar ? "loop-bar" : ""}
+                onClick={() => {
+                  setFromBar(bar);
+                  setToBar(Math.min(song?.measures ?? bar, Math.max(bar, bar + 3)));
+                  if (song) {
+                    setCurrentTime(measureToTime(bar, song));
+                  }
+                }}
+              >
                 {bar}
-              </span>
+              </button>
             ))}
-            <div className="playhead" style={{ left: `${progress * 100}%` }} />
+            <div className="playhead" style={{ left: `${playheadLeft}%` }} />
           </div>
 
           <div className="sheet-placeholder">
@@ -196,25 +378,30 @@ function App() {
               <span />
             </div>
             <div className="note-row">
-              {demoNotes.map((note, index) => (
+              {visibleNotes.slice(0, 180).map((note, index) => (
                 <span
-                  key={`${note.midi}-${index}`}
+                  key={`${note.midi}-${note.start}-${index}`}
                   className={`sheet-note ${note.hand} ${activeMidiNotes.has(note.midi) ? "active" : ""}`}
-                  style={{ left: `${18 + note.start * 18}%`, top: `${note.hand === "left" ? 64 : 28}%` }}
+                  title={`${noteName(note.midi)} ${note.trackName}`}
+                  style={{
+                    left: `${clamp(((note.start - practiceStart) / practiceDuration) * 100, 2, 96)}%`,
+                    top: `${note.hand === "left" ? 64 - (note.midi - 40) * 0.25 : 34 - (note.midi - 70) * 0.25}%`,
+                  }}
                 />
               ))}
             </div>
           </div>
 
           <div className="falling-notes">
-            {demoNotes.map((note, index) => (
+            {visibleNotes.slice(0, 220).map((note, index) => (
               <span
-                key={`${note.midi}-fall-${index}`}
+                key={`${note.midi}-fall-${note.start}-${index}`}
                 className={`fall-note ${note.hand} ${activeMidiNotes.has(note.midi) ? "active" : ""}`}
+                title={noteName(note.midi)}
                 style={{
                   left: `${((note.midi - keyboardStart) / (keyboardEnd - keyboardStart)) * 100}%`,
-                  height: `${40 + note.duration * 42}px`,
-                  transform: `translateY(${progress * 130 - note.start * 35}px)`,
+                  height: `${clamp(24 + note.duration * 32, 18, 120)}px`,
+                  transform: `translateY(${(note.start - currentTime) * 70 + 120}px)`,
                 }}
               />
             ))}
@@ -251,6 +438,7 @@ function App() {
         <span>
           Takte {fromBar}-{toBar}
         </span>
+        <span>{song ? `${currentTime.toFixed(1)}s / ${song.duration.toFixed(1)}s` : "0.0s"}</span>
       </footer>
     </main>
   );

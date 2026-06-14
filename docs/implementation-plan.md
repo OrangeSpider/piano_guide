@@ -13,14 +13,16 @@ Aufgaben:
 
 ## Phase 2: MIDI laden und analysieren
 
+Status: erster Durchstich umgesetzt.
+
 Ergebnis:
 Die App kann eine MIDI-Datei laden und grundlegende Informationen anzeigen.
 
 Aufgaben:
-- MIDI-Datei per Datei-Upload laden
-- Demo-Datei aus `public/samples` laden
-- Tempo, Dauer, Spuren und Noten extrahieren
-- Takte aus Time-Signature und Tempo ableiten
+- MIDI-Datei per Datei-Upload laden: umgesetzt
+- Demo-Datei aus `public/samples` laden: umgesetzt
+- Tempo, Dauer, Spuren und Noten extrahieren: umgesetzt
+- Takte aus Time-Signature und Tempo ableiten: grundlegend umgesetzt
 
 ## Phase 3: Visueller Playback-Prototyp
 

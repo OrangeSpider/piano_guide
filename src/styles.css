@@ -90,6 +90,11 @@ input {
   border-radius: 7px;
 }
 
+.icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .workspace {
   flex: 1;
   display: grid;
@@ -126,6 +131,39 @@ input {
 
 .file-button input {
   display: none;
+}
+
+.error-message {
+  padding: 10px 12px;
+  color: #8f1f1a;
+  background: #fff0ee;
+  border: 1px solid #e7aaa3;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.song-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.song-facts span {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  color: #334252;
+  background: #f3f6f8;
+  border: 1px solid #d7dee5;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.song-facts span:first-child {
+  grid-column: 1 / -1;
 }
 
 .field {
@@ -217,10 +255,15 @@ input {
   color: #c9d3dc;
 }
 
-.measure-ruler span {
+.measure-ruler button {
   display: grid;
   place-items: center;
+  min-width: 42px;
+  color: inherit;
+  background: transparent;
+  border: 0;
   border-right: 1px solid rgba(255, 255, 255, 0.12);
+  cursor: pointer;
   font-size: 13px;
 }
 
