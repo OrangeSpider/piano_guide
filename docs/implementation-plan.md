@@ -1,0 +1,79 @@
+# Piano Guide Implementierungsplan
+
+## Phase 1: Projektfundament
+
+Ergebnis:
+Eine lauffaehige Web-App mit dokumentierten Anforderungen, UI-Richtung und Entwicklungsplan.
+
+Aufgaben:
+- React/Vite/TypeScript Projekt anlegen
+- Basislayout erstellen
+- Demo-MIDI als Sample vorbereiten
+- Dokumentation anlegen
+
+## Phase 2: MIDI laden und analysieren
+
+Ergebnis:
+Die App kann eine MIDI-Datei laden und grundlegende Informationen anzeigen.
+
+Aufgaben:
+- MIDI-Datei per Datei-Upload laden
+- Demo-Datei aus `public/samples` laden
+- Tempo, Dauer, Spuren und Noten extrahieren
+- Takte aus Time-Signature und Tempo ableiten
+
+## Phase 3: Visueller Playback-Prototyp
+
+Ergebnis:
+Beim Abspielen werden die aktuell aktiven Noten auf der Klaviatur sichtbar.
+
+Aufgaben:
+- Playback-Zeit verwalten
+- Play/Pause/Stop implementieren
+- Tempo-Skalierung anwenden
+- Noten nach aktueller Zeit filtern
+- Klaviaturzustand visualisieren
+
+## Phase 4: Ueben nach Takten
+
+Ergebnis:
+Der Nutzer kann einen Taktbereich festlegen und endlos wiederholen.
+
+Aufgaben:
+- Taktlineal anzeigen
+- Start- und Endtakt einstellen
+- Loop-Logik implementieren
+- Takt vor/zurueck
+
+## Phase 5: Hand-Modi und Persistenz
+
+Ergebnis:
+Einstellungen werden pro Stueck gespeichert und koennen wieder geladen werden.
+
+Aufgaben:
+- Linke/rechte Hand aus MIDI-Spuren oder Notenlage ableiten
+- Hand-Modus in der Wiedergabe beruecksichtigen
+- Einstellungen im Local Storage speichern
+- Fortschritt pro Stueck speichern
+
+## Phase 6: Sprachsteuerung
+
+Ergebnis:
+Die wichtigsten Uebebefehle koennen per Sprache bedient werden.
+
+Aufgaben:
+- Browser Speech Recognition pruefen
+- Befehlsparser fuer Deutsch bauen
+- Befehle mit sichtbaren Aktionen verbinden
+- Fallback fuer Browser ohne Speech Recognition anzeigen
+
+## Phase 7: Notenbild und Fingersatz
+
+Ergebnis:
+Die App bietet eine lernnahe Darstellung mit Noten, Takten und Fingersatz.
+
+Aufgaben:
+- geeignete Notationsbibliothek evaluieren
+- Notenbild synchron zur Wiedergabe anzeigen
+- Fingersatzdatenmodell anlegen
+- Fingersatz je Note erfassen und speichern
