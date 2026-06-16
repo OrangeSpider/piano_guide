@@ -829,6 +829,7 @@ function App() {
                     note.hand,
                     noteDurationClass(song ? noteDurationInBeats(note, song) : 1),
                     activeNoteIds.has(note.id) ? "active" : "",
+                    !activeNoteIds.has(note.id) && upcomingNoteIds.has(note.id) ? "upcoming" : "",
                   ]
                     .filter(Boolean)
                     .join(" ")}

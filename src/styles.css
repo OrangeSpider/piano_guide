@@ -400,6 +400,10 @@ input {
   transform: scale(1.06);
 }
 
+.sheet-note.upcoming {
+  filter: drop-shadow(0 0 8px rgba(255, 200, 92, 0.55));
+}
+
 .note-head {
   position: absolute;
   left: 0;
@@ -417,10 +421,30 @@ input {
   background: #ffffff;
 }
 
+.sheet-note.upcoming .note-head {
+  border-color: #d99416;
+}
+
+.sheet-note.quarter.upcoming .note-head {
+  background: #ffc85c;
+}
+
+.sheet-note.half.upcoming .note-head,
+.sheet-note.whole.upcoming .note-head {
+  background: #fff8e5;
+}
+
 .note-stem {
   position: absolute;
   width: 2px;
   background: #1f2933;
+}
+
+.sheet-note.upcoming .note-stem,
+.sheet-note.upcoming .note-flag {
+  color: #d99416;
+  background: #d99416;
+  border-color: #d99416;
 }
 
 .sheet-note.right .note-stem {
