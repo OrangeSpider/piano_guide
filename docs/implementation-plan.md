@@ -38,14 +38,17 @@ Aufgaben:
 
 ## Phase 4: Ueben nach Takten
 
+Status: Bereichsauswahl und Verschieben umgesetzt, Loop-Basis aktiv.
+
 Ergebnis:
 Der Nutzer kann einen Taktbereich festlegen und endlos wiederholen.
 
 Aufgaben:
-- Taktlineal anzeigen
-- Start- und Endtakt einstellen
-- Loop-Logik implementieren
-- Takt vor/zurueck
+- Taktlineal anzeigen: umgesetzt
+- Start- und Endtakt einstellen: umgesetzt
+- Loop-Logik implementieren: grundlegend umgesetzt
+- Takt vor/zurueck: grundlegend umgesetzt
+- Bereich als Fenster nach links/rechts verschieben: umgesetzt
 
 ## Phase 5: Hand-Modi und Persistenz
 

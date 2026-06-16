@@ -103,6 +103,16 @@ function measureToTime(measure: number, song: Song) {
   return (measure - 1) * (60 / song.tempo) * song.beatsPerMeasure;
 }
 
+function timeToMeasure(time: number, song: Song) {
+  const secondsPerMeasure = (60 / song.tempo) * song.beatsPerMeasure;
+
+  return clamp(Math.floor(time / secondsPerMeasure) + 1, 1, song.measures);
+}
+
+function barLabel(bar: number) {
+  return `Takt ${bar}`;
+}
+
 function App() {
   const [song, setSong] = React.useState<Song | null>(null);
   const [isPlaying, setIsPlaying] = React.useState(false);
@@ -148,6 +158,8 @@ function App() {
   const practiceStart = song ? measureToTime(fromBar, song) : 0;
   const practiceEnd = song ? measureToTime(toBar + 1, song) : 1;
   const practiceDuration = Math.max(practiceEnd - practiceStart, 1);
+  const currentBar = song ? timeToMeasure(currentTime, song) : 1;
+  const progressInLoop = song ? clamp(((currentTime - practiceStart) / practiceDuration) * 100, 0, 100) : 0;
 
   React.useEffect(() => {
     if (!isPlaying || !song) {
@@ -218,6 +230,10 @@ function App() {
     setCurrentTime(loopStart);
   }
 
+  function restartLoopNow() {
+    setCurrentTime(loopStart);
+  }
+
   function jumpMeasure(direction: -1 | 1) {
     if (!song) {
       return;
@@ -225,6 +241,47 @@ function App() {
 
     const secondsPerMeasure = measureToTime(2, song);
     setCurrentTime((time) => clamp(time + secondsPerMeasure * direction, 0, song.duration));
+  }
+
+  function setPracticeRange(nextFromBar: number, nextToBar: number) {
+    if (!song) {
+      return;
+    }
+
+    const clampedFromBar = clamp(nextFromBar, 1, song.measures);
+    const clampedToBar = clamp(nextToBar, clampedFromBar, song.measures);
+
+    setFromBar(clampedFromBar);
+    setToBar(clampedToBar);
+    setCurrentTime((time) =>
+      clamp(time, measureToTime(clampedFromBar, song), measureToTime(clampedToBar + 1, song)),
+    );
+  }
+
+  function shiftPracticeRange(direction: -1 | 1) {
+    if (!song) {
+      return;
+    }
+
+    const width = toBar - fromBar;
+    const nextFromBar = clamp(fromBar + direction, 1, Math.max(1, song.measures - width));
+    setPracticeRange(nextFromBar, nextFromBar + width);
+  }
+
+  function handleRulerBarClick(bar: number) {
+    if (!song) {
+      return;
+    }
+
+    const distanceToStart = Math.abs(bar - fromBar);
+    const distanceToEnd = Math.abs(bar - toBar);
+
+    if (bar < fromBar || distanceToStart <= distanceToEnd) {
+      setPracticeRange(bar, Math.max(bar, toBar));
+      return;
+    }
+
+    setPracticeRange(fromBar, bar);
   }
 
   async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -300,7 +357,7 @@ function App() {
                 max={song?.measures ?? 1}
                 type="number"
                 value={fromBar}
-                onChange={(event) => setFromBar(clamp(Number(event.target.value), 1, song?.measures ?? 1))}
+                onChange={(event) => setPracticeRange(Number(event.target.value), toBar)}
               />
             </label>
             <label>
@@ -310,9 +367,43 @@ function App() {
                 max={song?.measures ?? fromBar}
                 type="number"
                 value={toBar}
-                onChange={(event) => setToBar(clamp(Number(event.target.value), fromBar, song?.measures ?? fromBar))}
+                onChange={(event) => setPracticeRange(fromBar, Number(event.target.value))}
               />
             </label>
+          </div>
+
+          <div className="field">
+            <span>Bereich verschieben</span>
+            <div className="range-nav">
+              <button disabled={!song || fromBar <= 1} onClick={() => shiftPracticeRange(-1)}>
+                <ChevronLeft size={18} />
+                Frueher
+              </button>
+              <button disabled={!song || toBar >= (song?.measures ?? toBar)} onClick={() => shiftPracticeRange(1)}>
+                Spaeter
+                <ChevronRight size={18} />
+              </button>
+            </div>
+          </div>
+
+          <div className="field">
+            <span>Loop-Aktionen</span>
+            <div className="range-nav">
+              <button disabled={!song} onClick={restartLoopNow}>
+                <Repeat2 size={18} />
+                Neu ab Start
+              </button>
+              <button
+                disabled={!song}
+                onClick={() => {
+                  setIsPlaying(false);
+                  setCurrentTime(loopStart);
+                }}
+              >
+                <Square size={18} />
+                An Start parken
+              </button>
+            </div>
           </div>
 
           <div className="field">
@@ -347,19 +438,29 @@ function App() {
             {rulerBars.map((bar) => (
               <button
                 key={bar}
-                className={bar >= fromBar && bar <= toBar ? "loop-bar" : ""}
-                onClick={() => {
-                  setFromBar(bar);
-                  setToBar(Math.min(song?.measures ?? bar, Math.max(bar, bar + 3)));
-                  if (song) {
-                    setCurrentTime(measureToTime(bar, song));
-                  }
-                }}
+                className={[
+                  bar >= fromBar && bar <= toBar ? "loop-bar" : "",
+                  bar === fromBar ? "range-start" : "",
+                  bar === toBar ? "range-end" : "",
+                  bar === currentBar ? "current-bar" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                onClick={() => handleRulerBarClick(bar)}
+                title={`${barLabel(bar)} ${bar === fromBar ? "(Start)" : bar === toBar ? "(Ende)" : ""}`.trim()}
               >
                 {bar}
               </button>
             ))}
             <div className="playhead" style={{ left: `${playheadLeft}%` }} />
+          </div>
+
+          <div className="loop-summary" aria-label="Loop-Zusammenfassung">
+            <strong>
+              Bereich {fromBar}-{toBar}
+            </strong>
+            <span>Aktuell in Takt {currentBar}</span>
+            <span>{progressInLoop.toFixed(0)}% durch den Uebebereich</span>
           </div>
 
           <div className="sheet-placeholder">
@@ -436,7 +537,7 @@ function App() {
           Modus: {handMode === "both" ? "beide Haende" : handMode === "left" ? "linke Hand" : "rechte Hand"}
         </span>
         <span>
-          Takte {fromBar}-{toBar}
+          Bereich {fromBar}-{toBar}, aktuell Takt {currentBar}
         </span>
         <span>{song ? `${currentTime.toFixed(1)}s / ${song.duration.toFixed(1)}s` : "0.0s"}</span>
       </footer>
