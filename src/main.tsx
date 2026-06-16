@@ -160,6 +160,23 @@ function App() {
   const practiceDuration = Math.max(practiceEnd - practiceStart, 1);
   const currentBar = song ? timeToMeasure(currentTime, song) : 1;
   const progressInLoop = song ? clamp(((currentTime - practiceStart) / practiceDuration) * 100, 0, 100) : 0;
+  const currentBarStart = song ? measureToTime(currentBar, song) : 0;
+  const currentBarEnd = song ? measureToTime(Math.min(currentBar + 1, (song?.measures ?? 1) + 1), song) : 1;
+  const sheetViewSpan = song ? Math.min(practiceDuration, Math.max((60 / song.tempo) * song.beatsPerMeasure * 2, 6)) : 6;
+  const sheetViewStart = song
+    ? clamp(currentTime - sheetViewSpan * 0.28, practiceStart, Math.max(practiceStart, practiceEnd - sheetViewSpan))
+    : 0;
+  const sheetViewEnd = song ? Math.min(practiceEnd, sheetViewStart + sheetViewSpan) : 1;
+  const sheetViewDuration = Math.max(sheetViewEnd - sheetViewStart, 1);
+  const currentBarSheetLeft = song ? clamp(((currentBarStart - sheetViewStart) / sheetViewDuration) * 100, 0, 100) : 0;
+  const currentBarSheetWidth = song
+    ? clamp(((currentBarEnd - currentBarStart) / sheetViewDuration) * 100, 6, 100 - currentBarSheetLeft)
+    : 0;
+  const fallingWindowLead = song ? Math.min(practiceDuration * 0.6, 4) : 4;
+  const fallingWindowTail = 0.45;
+  const upcomingPreviewWindow = 0.85;
+  const focusFromBar = song ? timeToMeasure(sheetViewStart, song) : 1;
+  const focusToBar = song ? timeToMeasure(Math.max(sheetViewEnd - 0.01, sheetViewStart), song) : 1;
 
   React.useEffect(() => {
     if (!isPlaying || !song) {
@@ -206,6 +223,16 @@ function App() {
     }) ?? [];
   const activeNotes = visibleNotes.filter((note) => currentTime >= note.start && currentTime <= note.start + note.duration);
   const activeMidiNotes = new Set(activeNotes.map((note) => note.midi));
+  const upcomingNotes = visibleNotes.filter(
+    (note) => note.start > currentTime && note.start <= currentTime + upcomingPreviewWindow,
+  );
+  const upcomingMidiNotes = new Set(upcomingNotes.map((note) => note.midi));
+  const sheetNotes = visibleNotes.filter(
+    (note) => note.start + note.duration >= sheetViewStart - 0.2 && note.start <= sheetViewEnd + 0.2,
+  );
+  const fallingNotes = visibleNotes.filter(
+    (note) => note.start + note.duration >= currentTime - fallingWindowTail && note.start <= currentTime + fallingWindowLead,
+  );
   const rulerBars = Array.from({ length: song?.measures ?? 12 }, (_, index) => index + 1).slice(0, 48);
   const playheadLeft = song ? clamp(((currentTime - practiceStart) / practiceDuration) * 100, 0, 100) : 0;
   const whiteKeys = Array.from({ length: keyboardEnd - keyboardStart + 1 }, (_, index) => keyboardStart + index).filter(
@@ -461,9 +488,15 @@ function App() {
             </strong>
             <span>Aktuell in Takt {currentBar}</span>
             <span>{progressInLoop.toFixed(0)}% durch den Uebebereich</span>
+            <span>Fokusfenster {focusFromBar}-{focusToBar}</span>
+            <span>{upcomingNotes.length} naechste Noten im Anflug</span>
           </div>
 
           <div className="sheet-placeholder">
+            <div
+              className="current-bar-band"
+              style={{ left: `${currentBarSheetLeft}%`, width: `${currentBarSheetWidth}%` }}
+            />
             <div className="staff">
               <span />
               <span />
@@ -479,13 +512,13 @@ function App() {
               <span />
             </div>
             <div className="note-row">
-              {visibleNotes.slice(0, 180).map((note, index) => (
+              {sheetNotes.slice(0, 180).map((note, index) => (
                 <span
                   key={`${note.midi}-${note.start}-${index}`}
                   className={`sheet-note ${note.hand} ${activeMidiNotes.has(note.midi) ? "active" : ""}`}
                   title={`${noteName(note.midi)} ${note.trackName}`}
                   style={{
-                    left: `${clamp(((note.start - practiceStart) / practiceDuration) * 100, 2, 96)}%`,
+                    left: `${clamp(((note.start - sheetViewStart) / sheetViewDuration) * 100, 2, 96)}%`,
                     top: `${note.hand === "left" ? 64 - (note.midi - 40) * 0.25 : 34 - (note.midi - 70) * 0.25}%`,
                   }}
                 />
@@ -494,10 +527,20 @@ function App() {
           </div>
 
           <div className="falling-notes">
-            {visibleNotes.slice(0, 220).map((note, index) => (
+            <div className="strike-line" aria-hidden="true">
+              <span />
+            </div>
+            {fallingNotes.slice(0, 220).map((note, index) => (
               <span
                 key={`${note.midi}-fall-${note.start}-${index}`}
-                className={`fall-note ${note.hand} ${activeMidiNotes.has(note.midi) ? "active" : ""}`}
+                className={[
+                  "fall-note",
+                  note.hand,
+                  activeMidiNotes.has(note.midi) ? "active" : "",
+                  !activeMidiNotes.has(note.midi) && upcomingMidiNotes.has(note.midi) ? "upcoming" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
                 title={noteName(note.midi)}
                 style={{
                   left: `${((note.midi - keyboardStart) / (keyboardEnd - keyboardStart)) * 100}%`,
@@ -513,8 +556,18 @@ function App() {
       <section className="keyboard" aria-label="Virtuelle Klaviatur">
         <div className="white-keys">
           {whiteKeys.map((midi) => (
-            <div key={midi} className={`white-key ${activeMidiNotes.has(midi) ? "active" : ""}`}>
+            <div
+              key={midi}
+              className={[
+                "white-key",
+                activeMidiNotes.has(midi) ? "active" : "",
+                !activeMidiNotes.has(midi) && upcomingMidiNotes.has(midi) ? "upcoming" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
               {noteName(midi).startsWith("C") && <span>{noteName(midi)}</span>}
+              {!activeMidiNotes.has(midi) && upcomingMidiNotes.has(midi) ? <i aria-hidden="true" /> : null}
             </div>
           ))}
         </div>
@@ -523,7 +576,13 @@ function App() {
             isBlackKey(midi) ? (
               <div
                 key={midi}
-                className={`black-key ${activeMidiNotes.has(midi) ? "active" : ""}`}
+                className={[
+                  "black-key",
+                  activeMidiNotes.has(midi) ? "active" : "",
+                  !activeMidiNotes.has(midi) && upcomingMidiNotes.has(midi) ? "upcoming" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
                 style={{ left: `${((midi - keyboardStart) / (keyboardEnd - keyboardStart + 1)) * 100}%` }}
               />
             ) : null,

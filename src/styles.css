@@ -317,6 +317,7 @@ input {
 .loop-summary {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 16px;
   padding: 0 18px;
   color: #425161;
@@ -334,6 +335,16 @@ input {
   overflow: hidden;
   background: #ffffff;
   border-bottom: 1px solid #d7dee5;
+}
+
+.current-bar-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, rgba(57, 184, 237, 0.12), rgba(57, 184, 237, 0.02));
+  border-left: 1px solid rgba(57, 184, 237, 0.55);
+  border-right: 1px solid rgba(57, 184, 237, 0.18);
+  pointer-events: none;
 }
 
 .staff {
@@ -380,7 +391,25 @@ input {
   overflow: hidden;
   background:
     linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px) 0 0 / 48px 100%,
+    linear-gradient(180deg, rgba(57, 184, 237, 0.12), transparent 26%),
     #25313b;
+}
+
+.strike-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 34px;
+  height: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.strike-line span {
+  display: block;
+  height: 3px;
+  background: linear-gradient(90deg, rgba(255, 200, 92, 0.18), #ffc85c 20%, #ffc85c 80%, rgba(255, 200, 92, 0.18));
+  box-shadow: 0 0 18px rgba(255, 200, 92, 0.45);
 }
 
 .fall-note {
@@ -389,7 +418,7 @@ input {
   width: 18px;
   border-radius: 6px;
   opacity: 0.82;
-  transition: box-shadow 120ms ease, opacity 120ms ease;
+  transition: box-shadow 120ms ease, opacity 120ms ease, filter 120ms ease, transform 120ms ease;
 }
 
 .fall-note.left {
@@ -403,6 +432,12 @@ input {
 .fall-note.active {
   opacity: 1;
   box-shadow: 0 0 26px currentColor;
+}
+
+.fall-note.upcoming {
+  opacity: 0.95;
+  filter: saturate(1.18) brightness(1.08);
+  box-shadow: 0 0 0 2px rgba(255, 200, 92, 0.35);
 }
 
 .keyboard {
@@ -430,12 +465,28 @@ input {
   background: linear-gradient(#8bdc48, #fffdf2 82%);
 }
 
+.white-key.upcoming {
+  background: linear-gradient(#ffe5a6, #fffdf2 86%);
+}
+
 .white-key span {
   position: absolute;
   bottom: 8px;
   left: 5px;
   color: #9ca6ad;
   font-size: 20px;
+}
+
+.white-key i {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  border-radius: 50%;
+  background: #ffc85c;
+  box-shadow: 0 0 10px rgba(255, 200, 92, 0.65);
 }
 
 .black-keys {
@@ -456,6 +507,10 @@ input {
 
 .black-key.active {
   background: #72a7d8;
+}
+
+.black-key.upcoming {
+  background: linear-gradient(#ffc85c, #101419 72%);
 }
 
 .statusbar {
