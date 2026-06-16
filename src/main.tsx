@@ -50,6 +50,39 @@ type PracticeSettings = {
 
 const keyboardStart = 21;
 const keyboardEnd = 108;
+const pianoSampleBaseUrl = "/audio/piano/";
+const pianoSampleUrls = {
+  A0: "A0.mp3",
+  C1: "C1.mp3",
+  "D#1": "Ds1.mp3",
+  "F#1": "Fs1.mp3",
+  A1: "A1.mp3",
+  C2: "C2.mp3",
+  "D#2": "Ds2.mp3",
+  "F#2": "Fs2.mp3",
+  A2: "A2.mp3",
+  C3: "C3.mp3",
+  "D#3": "Ds3.mp3",
+  "F#3": "Fs3.mp3",
+  A3: "A3.mp3",
+  C4: "C4.mp3",
+  "D#4": "Ds4.mp3",
+  "F#4": "Fs4.mp3",
+  A4: "A4.mp3",
+  C5: "C5.mp3",
+  "D#5": "Ds5.mp3",
+  "F#5": "Fs5.mp3",
+  A5: "A5.mp3",
+  C6: "C6.mp3",
+  "D#6": "Ds6.mp3",
+  "F#6": "Fs6.mp3",
+  A6: "A6.mp3",
+  C7: "C7.mp3",
+  "D#7": "Ds7.mp3",
+  "F#7": "Fs7.mp3",
+  A7: "A7.mp3",
+  C8: "C8.mp3",
+} as const;
 const practiceStoragePrefix = "piano-guide:practice:";
 const samplePath = "/samples/Ungarische.mid";
 
@@ -200,10 +233,9 @@ function App() {
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [savedAt, setSavedAt] = React.useState<number | null>(null);
   const [audioReady, setAudioReady] = React.useState(false);
+  const [audioLoading, setAudioLoading] = React.useState(false);
   const [audioError, setAudioError] = React.useState<string | null>(null);
-  const synthRef = React.useRef<Tone.PolySynth<Tone.FMSynth> | null>(null);
-  const filterRef = React.useRef<Tone.Filter | null>(null);
-  const reverbRef = React.useRef<Tone.Reverb | null>(null);
+  const samplerRef = React.useRef<Tone.Sampler | null>(null);
   const soundingNotesRef = React.useRef<Map<number, string>>(new Map());
 
   const loadMidi = React.useCallback(async (buffer: ArrayBuffer, fileName: string) => {
@@ -369,8 +401,9 @@ function App() {
 
   const releaseAudio = React.useCallback(() => {
     soundingNotesRef.current.forEach((toneNote) => {
-      synthRef.current?.triggerRelease(toneNote);
+      samplerRef.current?.triggerRelease(toneNote);
     });
+    samplerRef.current?.releaseAll();
     soundingNotesRef.current.clear();
   }, []);
 
@@ -378,45 +411,29 @@ function App() {
     try {
       await Tone.start();
 
-      if (!synthRef.current) {
-        filterRef.current = new Tone.Filter({
-          frequency: 1800,
-          rolloff: -24,
-          type: "lowpass",
-        });
-        reverbRef.current = new Tone.Reverb({
-          decay: 1.8,
-          preDelay: 0.02,
-          wet: 0.18,
-        }).toDestination();
-        filterRef.current.connect(reverbRef.current);
-        synthRef.current = new Tone.PolySynth(Tone.FMSynth, {
-          envelope: {
-            attack: 0.005,
-            decay: 0.22,
-            release: 0.9,
-            sustain: 0.18,
-          },
-          harmonicity: 1.5,
-          modulationIndex: 4,
-          modulation: {
-            type: "triangle",
-          },
-          modulationEnvelope: {
-            attack: 0.01,
-            decay: 0.18,
-            release: 0.6,
-            sustain: 0.12,
-          },
-        }).connect(filterRef.current);
+      if (!samplerRef.current) {
+        setAudioLoading(true);
 
-        synthRef.current.volume.value = -16;
+        samplerRef.current = await new Promise<Tone.Sampler>((resolve, reject) => {
+          const sampler = new Tone.Sampler({
+            attack: 0,
+            baseUrl: pianoSampleBaseUrl,
+            onerror: (error) => reject(error),
+            onload: () => resolve(sampler),
+            release: 1.2,
+            urls: pianoSampleUrls,
+          }).toDestination();
+
+          sampler.volume.value = -3;
+        });
       }
 
       setAudioReady(true);
+      setAudioLoading(false);
       setAudioError(null);
       return true;
     } catch {
+      setAudioLoading(false);
       setAudioError("Audio konnte im Browser nicht gestartet werden.");
       return false;
     }
@@ -425,12 +442,8 @@ function App() {
   React.useEffect(() => {
     return () => {
       releaseAudio();
-      synthRef.current?.dispose();
-      filterRef.current?.dispose();
-      reverbRef.current?.dispose();
-      synthRef.current = null;
-      filterRef.current = null;
-      reverbRef.current = null;
+      samplerRef.current?.dispose();
+      samplerRef.current = null;
     };
   }, [releaseAudio]);
 
@@ -444,13 +457,13 @@ function App() {
 
     nextActiveNotes.forEach((note, midi) => {
       if (!soundingNotesRef.current.has(midi)) {
-        synthRef.current?.triggerAttack(midiToToneNote(note.midi), undefined, note.velocity);
+        samplerRef.current?.triggerAttack(midiToToneNote(note.midi), undefined, note.velocity);
       }
     });
 
     soundingNotesRef.current.forEach((toneNote, midi) => {
       if (!nextActiveNotes.has(midi)) {
-        synthRef.current?.triggerRelease(toneNote);
+        samplerRef.current?.triggerRelease(toneNote);
       }
     });
 
@@ -695,7 +708,10 @@ function App() {
 
           <div className="voice-preview">
             <Volume2 size={18} />
-            <span>{audioError ?? (audioReady ? "Audio aktiv" : "Audio startet beim ersten Play")}</span>
+            <span>
+              {audioError ??
+                (audioLoading ? "Piano-Samples werden geladen" : audioReady ? "Piano-Audio aktiv" : "Piano startet beim ersten Play")}
+            </span>
           </div>
         </aside>
 
