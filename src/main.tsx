@@ -1,6 +1,7 @@
 import { Midi } from "@tonejs/midi";
 import React from "react";
 import ReactDOM from "react-dom/client";
+import * as Tone from "tone";
 import {
   ChevronLeft,
   ChevronRight,
@@ -24,6 +25,7 @@ type PianoNote = {
   midi: number;
   start: number;
   trackName: string;
+  velocity: number;
 };
 
 type Song = {
@@ -92,6 +94,7 @@ function parseMidi(buffer: ArrayBuffer, fileName: string): Song {
         midi: note.midi,
         start: note.time,
         trackName,
+        velocity: clamp(note.velocity, 0.2, 1),
       }));
     })
     .sort((left, right) => left.start - right.start);
@@ -122,6 +125,10 @@ function timeToMeasure(time: number, song: Song) {
 
 function barLabel(bar: number) {
   return `Takt ${bar}`;
+}
+
+function midiToToneNote(midi: number) {
+  return Tone.Frequency(midi, "midi").toNote();
 }
 
 function formatClockTime(seconds: number) {
@@ -192,6 +199,12 @@ function App() {
   const [currentTime, setCurrentTime] = React.useState(0);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [savedAt, setSavedAt] = React.useState<number | null>(null);
+  const [audioReady, setAudioReady] = React.useState(false);
+  const [audioError, setAudioError] = React.useState<string | null>(null);
+  const synthRef = React.useRef<Tone.PolySynth<Tone.FMSynth> | null>(null);
+  const filterRef = React.useRef<Tone.Filter | null>(null);
+  const reverbRef = React.useRef<Tone.Reverb | null>(null);
+  const soundingNotesRef = React.useRef<Map<number, string>>(new Map());
 
   const loadMidi = React.useCallback(async (buffer: ArrayBuffer, fileName: string) => {
     try {
@@ -354,9 +367,117 @@ function App() {
   );
   const allKeys = Array.from({ length: keyboardEnd - keyboardStart + 1 }, (_, index) => keyboardStart + index);
 
-  function handlePlayPause() {
+  const releaseAudio = React.useCallback(() => {
+    soundingNotesRef.current.forEach((toneNote) => {
+      synthRef.current?.triggerRelease(toneNote);
+    });
+    soundingNotesRef.current.clear();
+  }, []);
+
+  const ensureAudioReady = React.useCallback(async () => {
+    try {
+      await Tone.start();
+
+      if (!synthRef.current) {
+        filterRef.current = new Tone.Filter({
+          frequency: 1800,
+          rolloff: -24,
+          type: "lowpass",
+        });
+        reverbRef.current = new Tone.Reverb({
+          decay: 1.8,
+          preDelay: 0.02,
+          wet: 0.18,
+        }).toDestination();
+        filterRef.current.connect(reverbRef.current);
+        synthRef.current = new Tone.PolySynth(Tone.FMSynth, {
+          envelope: {
+            attack: 0.005,
+            decay: 0.22,
+            release: 0.9,
+            sustain: 0.18,
+          },
+          harmonicity: 1.5,
+          modulationIndex: 4,
+          modulation: {
+            type: "triangle",
+          },
+          modulationEnvelope: {
+            attack: 0.01,
+            decay: 0.18,
+            release: 0.6,
+            sustain: 0.12,
+          },
+        }).connect(filterRef.current);
+
+        synthRef.current.volume.value = -16;
+      }
+
+      setAudioReady(true);
+      setAudioError(null);
+      return true;
+    } catch {
+      setAudioError("Audio konnte im Browser nicht gestartet werden.");
+      return false;
+    }
+  }, []);
+
+  React.useEffect(() => {
+    return () => {
+      releaseAudio();
+      synthRef.current?.dispose();
+      filterRef.current?.dispose();
+      reverbRef.current?.dispose();
+      synthRef.current = null;
+      filterRef.current = null;
+      reverbRef.current = null;
+    };
+  }, [releaseAudio]);
+
+  React.useEffect(() => {
+    if (!audioReady || !isPlaying) {
+      releaseAudio();
+      return;
+    }
+
+    const nextActiveNotes = new Map(activeNotes.map((note) => [note.midi, note]));
+
+    nextActiveNotes.forEach((note, midi) => {
+      if (!soundingNotesRef.current.has(midi)) {
+        synthRef.current?.triggerAttack(midiToToneNote(note.midi), undefined, note.velocity);
+      }
+    });
+
+    soundingNotesRef.current.forEach((toneNote, midi) => {
+      if (!nextActiveNotes.has(midi)) {
+        synthRef.current?.triggerRelease(toneNote);
+      }
+    });
+
+    soundingNotesRef.current = new Map(
+      Array.from(nextActiveNotes.entries()).map(([midi, note]) => [midi, midiToToneNote(note.midi)]),
+    );
+  }, [activeNotes, audioReady, isPlaying, releaseAudio]);
+
+  React.useEffect(() => {
+    if (isPlaying) {
+      return;
+    }
+
+    releaseAudio();
+  }, [isPlaying, releaseAudio]);
+
+  async function handlePlayPause() {
     if (!song) {
       return;
+    }
+
+    if (!isPlaying) {
+      const audioStarted = await ensureAudioReady();
+
+      if (!audioStarted) {
+        return;
+      }
     }
 
     if (!isPlaying && (currentTime < loopStart || currentTime >= loopEnd)) {
@@ -369,10 +490,12 @@ function App() {
   function handleStop() {
     setIsPlaying(false);
     setCurrentTime(loopStart);
+    releaseAudio();
   }
 
   function restartLoopNow() {
     setCurrentTime(loopStart);
+    releaseAudio();
   }
 
   function jumpMeasure(direction: -1 | 1) {
@@ -572,7 +695,7 @@ function App() {
 
           <div className="voice-preview">
             <Volume2 size={18} />
-            <span>Sprachbefehle folgen in Phase 6</span>
+            <span>{audioError ?? (audioReady ? "Audio aktiv" : "Audio startet beim ersten Play")}</span>
           </div>
         </aside>
 
