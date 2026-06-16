@@ -22,6 +22,7 @@ type NoteHand = "left" | "right";
 type PianoNote = {
   duration: number;
   hand: NoteHand;
+  id: string;
   midi: number;
   start: number;
   trackName: string;
@@ -121,9 +122,10 @@ function parseMidi(buffer: ArrayBuffer, fileName: string): Song {
       const trackName = track.name || `Spur ${trackIndex + 1}`;
       const trackHand: NoteHand = trackAveragePitch[trackIndex] <= splitPitch ? "left" : "right";
 
-      return track.notes.map((note) => ({
+      return track.notes.map((note, noteIndex) => ({
         duration: Math.max(note.duration, 0.05),
         hand: tracksWithNotes.length > 1 ? trackHand : ((note.midi < 60 ? "left" : "right") satisfies NoteHand),
+        id: `${trackIndex}-${noteIndex}-${note.midi}-${note.time}`,
         midi: note.midi,
         start: note.time,
         trackName,
@@ -162,6 +164,38 @@ function barLabel(bar: number) {
 
 function midiToToneNote(midi: number) {
   return Tone.Frequency(midi, "midi").toNote();
+}
+
+function noteDurationInBeats(note: PianoNote, song: Song) {
+  return (note.duration * song.tempo) / 60;
+}
+
+function noteDurationClass(durationInBeats: number) {
+  if (durationInBeats >= 3.5) {
+    return "whole";
+  }
+
+  if (durationInBeats >= 1.75) {
+    return "half";
+  }
+
+  return "quarter";
+}
+
+function noteFlags(durationInBeats: number) {
+  if (durationInBeats <= 0.375) {
+    return 2;
+  }
+
+  if (durationInBeats <= 0.75) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function noteYPosition(note: PianoNote) {
+  return note.hand === "left" ? 64 - (note.midi - 40) * 0.25 : 34 - (note.midi - 70) * 0.25;
 }
 
 function formatClockTime(seconds: number) {
@@ -381,14 +415,22 @@ function App() {
       return handMatches && note.start + note.duration >= practiceStart - 1 && note.start <= practiceEnd + 1;
     }) ?? [];
   const activeNotes = visibleNotes.filter((note) => currentTime >= note.start && currentTime <= note.start + note.duration);
+  const activeNoteIds = new Set(activeNotes.map((note) => note.id));
   const activeMidiNotes = new Set(activeNotes.map((note) => note.midi));
   const upcomingNotes = visibleNotes.filter(
     (note) => note.start > currentTime && note.start <= currentTime + upcomingPreviewWindow,
   );
+  const upcomingNoteIds = new Set(upcomingNotes.map((note) => note.id));
   const upcomingMidiNotes = new Set(upcomingNotes.map((note) => note.midi));
   const sheetNotes = visibleNotes.filter(
     (note) => note.start + note.duration >= sheetViewStart - 0.2 && note.start <= sheetViewEnd + 0.2,
   );
+  const visibleBarLines =
+    song === null
+      ? []
+      : Array.from({ length: Math.max(0, focusToBar - focusFromBar + 2) }, (_, index) => focusFromBar + index).filter(
+          (bar) => bar >= 1 && bar <= song.measures + 1,
+        );
   const fallingNotes = visibleNotes.filter(
     (note) => note.start + note.duration >= currentTime - fallingWindowTail && note.start <= currentTime + fallingWindowLead,
   );
@@ -766,17 +808,43 @@ function App() {
               <span />
               <span />
             </div>
+            <div className="bar-lines" aria-hidden="true">
+              {song &&
+                visibleBarLines.map((bar) => (
+                  <span
+                    key={`sheet-bar-${bar}`}
+                    className="bar-line"
+                    style={{
+                      left: `${clamp(((measureToTime(bar, song) - sheetViewStart) / sheetViewDuration) * 100, 0, 100)}%`,
+                    }}
+                  />
+                ))}
+            </div>
             <div className="note-row">
               {sheetNotes.slice(0, 180).map((note, index) => (
                 <span
                   key={`${note.midi}-${note.start}-${index}`}
-                  className={`sheet-note ${note.hand} ${activeMidiNotes.has(note.midi) ? "active" : ""}`}
+                  className={[
+                    "sheet-note",
+                    note.hand,
+                    noteDurationClass(song ? noteDurationInBeats(note, song) : 1),
+                    activeNoteIds.has(note.id) ? "active" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
                   title={`${noteName(note.midi)} ${note.trackName}`}
                   style={{
                     left: `${clamp(((note.start - sheetViewStart) / sheetViewDuration) * 100, 2, 96)}%`,
-                    top: `${note.hand === "left" ? 64 - (note.midi - 40) * 0.25 : 34 - (note.midi - 70) * 0.25}%`,
+                    top: `${noteYPosition(note)}%`,
+                    width: `${clamp(((note.duration / sheetViewDuration) * 100) * 1.2, 18, 72)}px`,
                   }}
-                />
+                >
+                  <i className="note-head" />
+                  <i className="note-stem" />
+                  {Array.from({ length: noteFlags(song ? noteDurationInBeats(note, song) : 1) }, (_, flagIndex) => (
+                    <i key={flagIndex} className={`note-flag flag-${flagIndex + 1}`} />
+                  ))}
+                </span>
               ))}
             </div>
           </div>
@@ -791,8 +859,8 @@ function App() {
                 className={[
                   "fall-note",
                   note.hand,
-                  activeMidiNotes.has(note.midi) ? "active" : "",
-                  !activeMidiNotes.has(note.midi) && upcomingMidiNotes.has(note.midi) ? "upcoming" : "",
+                  activeNoteIds.has(note.id) ? "active" : "",
+                  !activeNoteIds.has(note.id) && upcomingNoteIds.has(note.id) ? "upcoming" : "",
                 ]
                   .filter(Boolean)
                   .join(" ")}
