@@ -36,8 +36,19 @@ type Song = {
   tracks: number;
 };
 
+type PracticeSettings = {
+  currentTime: number;
+  fromBar: number;
+  handMode: HandMode;
+  loop: boolean;
+  tempo: number;
+  toBar: number;
+  updatedAt: number;
+};
+
 const keyboardStart = 21;
 const keyboardEnd = 108;
+const practiceStoragePrefix = "piano-guide:practice:";
 const samplePath = "/samples/Ungarische.mid";
 
 function isBlackKey(midi: number) {
@@ -113,6 +124,63 @@ function barLabel(bar: number) {
   return `Takt ${bar}`;
 }
 
+function formatClockTime(seconds: number) {
+  const totalSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainingSeconds = String(totalSeconds % 60).padStart(2, "0");
+
+  return `${minutes}:${remainingSeconds}`;
+}
+
+function formatSavedAt(timestamp: number) {
+  return new Date(timestamp).toLocaleString("de-DE", {
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "2-digit",
+  });
+}
+
+function songStorageKey(song: Song) {
+  return `${practiceStoragePrefix}${song.name}:${song.notes.length}:${song.measures}:${song.tempo}`;
+}
+
+function sanitizeHandMode(value: unknown): HandMode {
+  return value === "left" || value === "right" || value === "both" ? value : "both";
+}
+
+function readPracticeSettings(song: Song): PracticeSettings | null {
+  try {
+    const rawValue = window.localStorage.getItem(songStorageKey(song));
+
+    if (!rawValue) {
+      return null;
+    }
+
+    const parsedValue = JSON.parse(rawValue) as Partial<PracticeSettings>;
+
+    return {
+      currentTime: typeof parsedValue.currentTime === "number" ? parsedValue.currentTime : 0,
+      fromBar: typeof parsedValue.fromBar === "number" ? parsedValue.fromBar : 1,
+      handMode: sanitizeHandMode(parsedValue.handMode),
+      loop: typeof parsedValue.loop === "boolean" ? parsedValue.loop : true,
+      tempo: typeof parsedValue.tempo === "number" ? parsedValue.tempo : song.tempo,
+      toBar: typeof parsedValue.toBar === "number" ? parsedValue.toBar : Math.min(song.measures, 4),
+      updatedAt: typeof parsedValue.updatedAt === "number" ? parsedValue.updatedAt : Date.now(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePracticeSettings(song: Song, settings: PracticeSettings) {
+  try {
+    window.localStorage.setItem(songStorageKey(song), JSON.stringify(settings));
+  } catch {
+    // Local storage is optional; the app should still work without it.
+  }
+}
+
 function App() {
   const [song, setSong] = React.useState<Song | null>(null);
   const [isPlaying, setIsPlaying] = React.useState(false);
@@ -123,16 +191,24 @@ function App() {
   const [handMode, setHandMode] = React.useState<HandMode>("both");
   const [currentTime, setCurrentTime] = React.useState(0);
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [savedAt, setSavedAt] = React.useState<number | null>(null);
 
   const loadMidi = React.useCallback(async (buffer: ArrayBuffer, fileName: string) => {
     try {
       const parsedSong = parseMidi(buffer, fileName);
+      const savedSettings = readPracticeSettings(parsedSong);
+      const nextFromBar = clamp(savedSettings?.fromBar ?? 1, 1, parsedSong.measures);
+      const nextToBar = clamp(savedSettings?.toBar ?? Math.min(parsedSong.measures, 4), nextFromBar, parsedSong.measures);
+      const nextCurrentTime = clamp(savedSettings?.currentTime ?? 0, 0, parsedSong.duration);
 
       setSong(parsedSong);
-      setTempo(parsedSong.tempo);
-      setFromBar(1);
-      setToBar(Math.min(parsedSong.measures, 4));
-      setCurrentTime(0);
+      setTempo(clamp(savedSettings?.tempo ?? parsedSong.tempo, 20, 220));
+      setFromBar(nextFromBar);
+      setToBar(nextToBar);
+      setLoop(savedSettings?.loop ?? true);
+      setHandMode(savedSettings?.handMode ?? "both");
+      setCurrentTime(nextCurrentTime);
+      setSavedAt(savedSettings?.updatedAt ?? null);
       setIsPlaying(false);
       setLoadError(null);
     } catch {
@@ -177,6 +253,10 @@ function App() {
   const upcomingPreviewWindow = 0.85;
   const focusFromBar = song ? timeToMeasure(sheetViewStart, song) : 1;
   const focusToBar = song ? timeToMeasure(Math.max(sheetViewEnd - 0.01, sheetViewStart), song) : 1;
+  const savedProgressBar = song ? timeToMeasure(currentTime, song) : 1;
+  const savedProgressLabel = savedAt
+    ? `Merker: Takt ${savedProgressBar}, ${formatClockTime(currentTime)} gespeichert am ${formatSavedAt(savedAt)}`
+    : null;
 
   React.useEffect(() => {
     if (!isPlaying || !song) {
@@ -211,6 +291,40 @@ function App() {
     setFromBar((bar) => clamp(bar, 1, song.measures));
     setToBar((bar) => clamp(Math.max(bar, fromBar), 1, song.measures));
   }, [fromBar, song]);
+
+  React.useEffect(() => {
+    if (!song) {
+      return;
+    }
+
+    writePracticeSettings(song, {
+      currentTime,
+      fromBar,
+      handMode,
+      loop,
+      tempo,
+      toBar,
+      updatedAt: Date.now(),
+    });
+    setSavedAt(Date.now());
+  }, [fromBar, handMode, loop, song, tempo, toBar]);
+
+  React.useEffect(() => {
+    if (!song || isPlaying) {
+      return;
+    }
+
+    writePracticeSettings(song, {
+      currentTime,
+      fromBar,
+      handMode,
+      loop,
+      tempo,
+      toBar,
+      updatedAt: Date.now(),
+    });
+    setSavedAt(Date.now());
+  }, [currentTime, fromBar, handMode, isPlaying, loop, song, tempo, toBar]);
 
   const visibleNotes =
     song?.notes.filter((note) => {
@@ -366,6 +480,8 @@ function App() {
             <span>{song ? `${song.tracks} Spuren` : "0 Spuren"}</span>
             <span>{song ? `${song.measures} Takte` : "0 Takte"}</span>
           </div>
+
+          {savedProgressLabel && <div className="saved-progress">{savedProgressLabel}</div>}
 
           <div className="field">
             <span>Tempo</span>

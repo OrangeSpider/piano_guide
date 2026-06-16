@@ -52,14 +52,17 @@ Aufgaben:
 
 ## Phase 5: Hand-Modi und Persistenz
 
+Status: Hand-Modus aktiv, Einstellungen pro Stueck im Local Storage gespeichert.
+
 Ergebnis:
 Einstellungen werden pro Stueck gespeichert und koennen wieder geladen werden.
 
 Aufgaben:
-- Linke/rechte Hand aus MIDI-Spuren oder Notenlage ableiten
-- Hand-Modus in der Wiedergabe beruecksichtigen
-- Einstellungen im Local Storage speichern
-- Fortschritt pro Stueck speichern
+- Linke/rechte Hand aus MIDI-Spuren oder Notenlage ableiten: grundlegend umgesetzt
+- Hand-Modus in der Wiedergabe beruecksichtigen: umgesetzt
+- Einstellungen im Local Storage speichern: umgesetzt
+- Fortschritt pro Stueck speichern: grundlegend umgesetzt
+- Gespeicherten Uebestand im UI sichtbar machen: umgesetzt
 
 ## Phase 6: Sprachsteuerung
 

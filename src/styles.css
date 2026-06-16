@@ -166,6 +166,16 @@ input {
   grid-column: 1 / -1;
 }
 
+.saved-progress {
+  padding: 10px 12px;
+  color: #6a4d12;
+  background: #fff7df;
+  border: 1px solid #ead28d;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .field {
   display: grid;
   gap: 8px;
