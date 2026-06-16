@@ -21,10 +21,12 @@ input {
 }
 
 .app-shell {
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: #eef2f5;
+  overflow: hidden;
 }
 
 .topbar {
@@ -100,12 +102,15 @@ input {
   display: grid;
   grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
   min-height: 0;
+  overflow: hidden;
 }
 
 .control-panel {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  min-height: 0;
+  overflow-y: auto;
   padding: 18px;
   background: #ffffff;
   border-right: 1px solid #d7dee5;
@@ -273,9 +278,39 @@ input {
   font-size: 13px;
 }
 
+.voice-control {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  color: #425161;
+  background: #eef4f8;
+  border: 1px solid #c9d3dc;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.voice-control button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #ffffff;
+  background: #166f9b;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.voice-control button.listening {
+  background: #8f1f1a;
+}
+
 .practice-view {
   display: grid;
-  grid-template-rows: 44px 54px 1.2fr 1fr;
+  grid-template-rows: 44px minmax(44px, auto) minmax(180px, 1.2fr) minmax(120px, 0.8fr);
+  min-height: 0;
   min-width: 0;
   background: #f8fafc;
 }
@@ -376,6 +411,16 @@ input {
   bottom: 18%;
   width: 2px;
   background: rgba(81, 96, 111, 0.25);
+}
+
+.bar-line i {
+  position: absolute;
+  top: -22px;
+  left: 5px;
+  color: #566575;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
 }
 
 .beam-groups {
@@ -775,9 +820,11 @@ input {
 
   .workspace {
     grid-template-columns: 1fr;
+    overflow-y: auto;
   }
 
   .control-panel {
+    overflow: visible;
     border-right: 0;
     border-bottom: 1px solid #d7dee5;
   }

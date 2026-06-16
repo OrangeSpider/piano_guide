@@ -66,14 +66,16 @@ Aufgaben:
 
 ## Phase 6: Sprachsteuerung
 
+Status: erster Browser-Durchstich mit deutschen Befehlen umgesetzt.
+
 Ergebnis:
 Die wichtigsten Uebebefehle koennen per Sprache bedient werden.
 
 Aufgaben:
-- Browser Speech Recognition pruefen
-- Befehlsparser fuer Deutsch bauen
-- Befehle mit sichtbaren Aktionen verbinden
-- Fallback fuer Browser ohne Speech Recognition anzeigen
+- Browser Speech Recognition pruefen: umgesetzt
+- Befehlsparser fuer Deutsch bauen: erster Durchstich umgesetzt
+- Befehle mit sichtbaren Aktionen verbinden: erster Durchstich umgesetzt
+- Fallback fuer Browser ohne Speech Recognition anzeigen: umgesetzt
 
 ## Phase 7: Notenbild und Fingersatz
 

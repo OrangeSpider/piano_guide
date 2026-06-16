@@ -7,6 +7,8 @@ import {
   ChevronRight,
   FileMusic,
   Hand,
+  Mic,
+  MicOff,
   Pause,
   Play,
   Repeat2,
@@ -18,6 +20,33 @@ import "./styles.css";
 
 type HandMode = "both" | "left" | "right";
 type NoteHand = "left" | "right";
+type SpeechRecognitionResultLike = {
+  isFinal: boolean;
+  [index: number]: {
+    transcript: string;
+  };
+};
+type SpeechRecognitionEventLike = Event & {
+  resultIndex: number;
+  results: {
+    length: number;
+    [index: number]: SpeechRecognitionResultLike;
+  };
+};
+type SpeechRecognitionErrorEventLike = Event & {
+  error: string;
+};
+type BrowserSpeechRecognition = EventTarget & {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onend: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
 
 type PianoNote = {
   duration: number;
@@ -318,6 +347,26 @@ function formatSavedAt(timestamp: number) {
   });
 }
 
+function getSpeechRecognitionConstructor() {
+  const speechWindow = window as Window &
+    typeof globalThis & {
+      SpeechRecognition?: BrowserSpeechRecognitionConstructor;
+      webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor;
+    };
+
+  return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition ?? null;
+}
+
+function normalizeVoiceCommand(command: string) {
+  return command
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function songStorageKey(song: Song) {
   return `${practiceStoragePrefix}${song.name}:${song.notes.length}:${song.measures}:${song.tempo}`;
 }
@@ -373,9 +422,13 @@ function App() {
   const [audioLoading, setAudioLoading] = React.useState(false);
   const [audioError, setAudioError] = React.useState<string | null>(null);
   const [manualSheetStart, setManualSheetStart] = React.useState<number | null>(null);
+  const [voiceListening, setVoiceListening] = React.useState(false);
+  const [voiceStatus, setVoiceStatus] = React.useState("Sprachsteuerung bereit");
   const sheetDragRef = React.useRef<{ startTime: number; startX: number; width: number } | null>(null);
+  const recognitionRef = React.useRef<BrowserSpeechRecognition | null>(null);
   const samplerRef = React.useRef<Tone.Sampler | null>(null);
   const soundingNotesRef = React.useRef<Map<number, string>>(new Map());
+  const speechSupported = typeof window !== "undefined" && getSpeechRecognitionConstructor() !== null;
 
   const loadMidi = React.useCallback(async (buffer: ArrayBuffer, fileName: string) => {
     try {
@@ -478,6 +531,13 @@ function App() {
 
     return () => window.clearInterval(interval);
   }, [isPlaying, loop, loopEnd, loopStart, song, tempo]);
+
+  React.useEffect(() => {
+    return () => {
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+    };
+  }, []);
 
   React.useEffect(() => {
     if (!song) {
@@ -672,6 +732,29 @@ function App() {
     releaseAudio();
   }
 
+  async function startPlaybackFromVoice() {
+    if (!song || isPlaying) {
+      return;
+    }
+
+    const audioStarted = await ensureAudioReady();
+
+    if (!audioStarted) {
+      return;
+    }
+
+    if (currentTime < loopStart || currentTime >= loopEnd) {
+      setCurrentTime(loopStart);
+    }
+
+    setIsPlaying(true);
+  }
+
+  function stopPlaybackFromVoice() {
+    setIsPlaying(false);
+    releaseAudio();
+  }
+
   function jumpMeasure(direction: -1 | 1) {
     if (!song) {
       return;
@@ -720,6 +803,155 @@ function App() {
     }
 
     setPracticeRange(fromBar, bar);
+  }
+
+  function applyVoiceCommand(rawCommand: string) {
+    const command = normalizeVoiceCommand(rawCommand);
+    const rangeMatch = command.match(/(?:takt|takte)?\s*(\d+)\s*(?:bis|-)\s*(\d+)/);
+    const speedMatch = command.match(/(?:speed|tempo)\s*(\d+)/);
+    const singleBarMatch = command.match(/(?:takt|takte)\s*(\d+)/);
+
+    if (!command) {
+      return;
+    }
+
+    if (command.includes("start") || command.includes("spiel") || command.includes("play")) {
+      void startPlaybackFromVoice();
+      setVoiceStatus(`Befehl: ${rawCommand}`);
+      return;
+    }
+
+    if (command.includes("stop") || command.includes("pause") || command.includes("halt")) {
+      stopPlaybackFromVoice();
+      setVoiceStatus(`Befehl: ${rawCommand}`);
+      return;
+    }
+
+    if (command.includes("takt vor") || command.includes("weiter")) {
+      jumpMeasure(1);
+      setVoiceStatus(`Befehl: ${rawCommand}`);
+      return;
+    }
+
+    if (command.includes("takt zuruck") || command.includes("zurueck")) {
+      jumpMeasure(-1);
+      setVoiceStatus(`Befehl: ${rawCommand}`);
+      return;
+    }
+
+    if (rangeMatch) {
+      setPracticeRange(Number(rangeMatch[1]), Number(rangeMatch[2]));
+      setVoiceStatus(`Befehl: ${rawCommand}`);
+      return;
+    }
+
+    if (command.includes("takt wiederholen")) {
+      setPracticeRange(currentBar, currentBar);
+      setVoiceStatus(`Befehl: ${rawCommand}`);
+      return;
+    }
+
+    if (singleBarMatch) {
+      const bar = Number(singleBarMatch[1]);
+      setPracticeRange(bar, bar);
+      setVoiceStatus(`Befehl: ${rawCommand}`);
+      return;
+    }
+
+    if (command.includes("linke hand") || command === "links") {
+      setHandMode("left");
+      setVoiceStatus(`Befehl: ${rawCommand}`);
+      return;
+    }
+
+    if (command.includes("rechte hand") || command === "rechts") {
+      setHandMode("right");
+      setVoiceStatus(`Befehl: ${rawCommand}`);
+      return;
+    }
+
+    if (command.includes("beide")) {
+      setHandMode("both");
+      setVoiceStatus(`Befehl: ${rawCommand}`);
+      return;
+    }
+
+    if (speedMatch) {
+      setTempo(clamp(Number(speedMatch[1]), 20, 220));
+      setVoiceStatus(`Befehl: ${rawCommand}`);
+      return;
+    }
+
+    if (command.includes("schneller")) {
+      setTempo((value) => Math.min(220, value + 5));
+      setVoiceStatus(`Befehl: ${rawCommand}`);
+      return;
+    }
+
+    if (command.includes("langsamer")) {
+      setTempo((value) => Math.max(20, value - 5));
+      setVoiceStatus(`Befehl: ${rawCommand}`);
+      return;
+    }
+
+    if (command.includes("halbieren")) {
+      setTempo((value) => Math.max(20, Math.round(value / 2)));
+      setVoiceStatus(`Befehl: ${rawCommand}`);
+      return;
+    }
+
+    setVoiceStatus(`Nicht erkannt: ${rawCommand}`);
+  }
+
+  function toggleVoiceControl() {
+    if (!speechSupported) {
+      setVoiceStatus("Spracherkennung wird von diesem Browser nicht unterstuetzt.");
+      return;
+    }
+
+    if (voiceListening) {
+      recognitionRef.current?.stop();
+      setVoiceListening(false);
+      setVoiceStatus("Sprachsteuerung pausiert");
+      return;
+    }
+
+    const Recognition = getSpeechRecognitionConstructor();
+
+    if (!Recognition) {
+      setVoiceStatus("Spracherkennung wird von diesem Browser nicht unterstuetzt.");
+      return;
+    }
+
+    const recognition = new Recognition();
+    recognition.lang = "de-DE";
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.onresult = (event) => {
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+
+        if (result.isFinal) {
+          applyVoiceCommand(result[0].transcript);
+        }
+      }
+    };
+    recognition.onerror = (event) => {
+      setVoiceStatus(`Sprachfehler: ${event.error}`);
+      setVoiceListening(false);
+    };
+    recognition.onend = () => {
+      setVoiceListening(false);
+    };
+    recognitionRef.current = recognition;
+
+    try {
+      recognition.start();
+      setVoiceListening(true);
+      setVoiceStatus("Ich hoere zu");
+    } catch {
+      setVoiceStatus("Spracherkennung konnte nicht gestartet werden.");
+    }
   }
 
   function handleSheetPointerDown(event: React.PointerEvent<HTMLDivElement>) {
@@ -910,6 +1142,14 @@ function App() {
                 (audioLoading ? "Piano-Samples werden geladen" : audioReady ? "Piano-Audio aktiv" : "Piano startet beim ersten Play")}
             </span>
           </div>
+
+          <div className="voice-control">
+            <button className={voiceListening ? "listening" : ""} onClick={toggleVoiceControl} type="button">
+              {voiceListening ? <MicOff size={18} /> : <Mic size={18} />}
+              {voiceListening ? "Zuhoeren stoppen" : "Sprachsteuerung"}
+            </button>
+            <span>{speechSupported ? voiceStatus : "Spracherkennung im Browser nicht verfuegbar"}</span>
+          </div>
         </aside>
 
         <section className="practice-view" aria-label="Uebebereich">
@@ -978,7 +1218,9 @@ function App() {
                     style={{
                       left: `${clamp(((measureToTime(bar, song) - sheetViewStart) / sheetViewDuration) * 100, 0, 100)}%`,
                     }}
-                  />
+                  >
+                    <i>{bar}</i>
+                  </span>
                 ))}
             </div>
             <div className="beam-groups" aria-hidden="true">
