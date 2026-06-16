@@ -49,6 +49,16 @@ type PracticeSettings = {
   updatedAt: number;
 };
 
+type BeamGroup = {
+  flags: number;
+  hand: NoteHand;
+  ids: string[];
+  left: number;
+  stemOffset: number;
+  top: string;
+  width: string;
+};
+
 const keyboardStart = 21;
 const keyboardEnd = 108;
 const pianoSampleBaseUrl = "/audio/piano/";
@@ -179,15 +189,31 @@ function noteDurationClass(durationInBeats: number) {
     return "half";
   }
 
-  return "quarter";
+  if (durationInBeats >= 0.875) {
+    return "quarter";
+  }
+
+  if (durationInBeats >= 0.4375) {
+    return "eighth";
+  }
+
+  if (durationInBeats >= 0.1875) {
+    return "sixteenth";
+  }
+
+  return "thirty-second";
 }
 
 function noteFlags(durationInBeats: number) {
-  if (durationInBeats <= 0.375) {
+  if (durationInBeats < 0.1875) {
+    return 3;
+  }
+
+  if (durationInBeats < 0.4375) {
     return 2;
   }
 
-  if (durationInBeats <= 0.75) {
+  if (durationInBeats < 0.875) {
     return 1;
   }
 
@@ -196,6 +222,83 @@ function noteFlags(durationInBeats: number) {
 
 function noteYPosition(note: PianoNote) {
   return note.hand === "left" ? 64 - (note.midi - 40) * 0.25 : 34 - (note.midi - 70) * 0.25;
+}
+
+function noteLeftPercent(note: PianoNote, viewStart: number, viewDuration: number) {
+  return clamp(((note.start - viewStart) / viewDuration) * 100, 2, 96);
+}
+
+function noteWidthPixels(note: PianoNote, viewDuration: number) {
+  return clamp(((note.duration / viewDuration) * 100) * 1.2, 18, 72);
+}
+
+function noteStemOffsetPixels(note: PianoNote) {
+  return note.hand === "right" ? 15 : 2;
+}
+
+function measureIndexForTime(time: number, song: Song) {
+  return Math.floor(time / ((60 / song.tempo) * song.beatsPerMeasure));
+}
+
+function buildBeamGroups(notes: PianoNote[], song: Song, viewStart: number, viewDuration: number) {
+  const shortNotes = notes
+    .map((note) => ({
+      flags: noteFlags(noteDurationInBeats(note, song)),
+      measureIndex: measureIndexForTime(note.start, song),
+      note,
+    }))
+    .filter(({ flags }) => flags > 0)
+    .sort((left, right) => left.note.start - right.note.start || left.note.midi - right.note.midi);
+  const groups: BeamGroup[] = [];
+  let currentGroup: typeof shortNotes = [];
+
+  function flushGroup() {
+    if (currentGroup.length < 2) {
+      currentGroup = [];
+      return;
+    }
+
+    const firstNote = currentGroup[0].note;
+    const lastNote = currentGroup[currentGroup.length - 1].note;
+    const firstLeft = noteLeftPercent(firstNote, viewStart, viewDuration);
+    const lastLeft = noteLeftPercent(lastNote, viewStart, viewDuration);
+    const firstStemOffset = noteStemOffsetPixels(firstNote);
+    const lastStemOffset = noteStemOffsetPixels(lastNote);
+    const averageY =
+      currentGroup.reduce((sum, { note }) => sum + noteYPosition(note), 0) / Math.max(1, currentGroup.length);
+
+    groups.push({
+      flags: Math.max(...currentGroup.map(({ flags }) => flags)),
+      hand: firstNote.hand,
+      ids: currentGroup.map(({ note }) => note.id),
+      left: firstLeft,
+      stemOffset: firstStemOffset,
+      top:
+        firstNote.hand === "left"
+          ? `calc(${clamp(averageY, 12, 80)}% + 66px)`
+          : `calc(${clamp(averageY, 12, 80)}% - 12px)`,
+      width: `calc(${Math.max(2, lastLeft - firstLeft)}% + ${lastStemOffset - firstStemOffset}px)`,
+    });
+    currentGroup = [];
+  }
+
+  shortNotes.forEach((entry) => {
+    const previous = currentGroup[currentGroup.length - 1];
+    const startsNewGroup =
+      previous &&
+      (previous.note.hand !== entry.note.hand ||
+        previous.measureIndex !== entry.measureIndex ||
+        entry.note.start - previous.note.start > (60 / song.tempo) * 0.9);
+
+    if (startsNewGroup) {
+      flushGroup();
+    }
+
+    currentGroup.push(entry);
+  });
+  flushGroup();
+
+  return groups;
 }
 
 function formatClockTime(seconds: number) {
@@ -269,6 +372,8 @@ function App() {
   const [audioReady, setAudioReady] = React.useState(false);
   const [audioLoading, setAudioLoading] = React.useState(false);
   const [audioError, setAudioError] = React.useState<string | null>(null);
+  const [manualSheetStart, setManualSheetStart] = React.useState<number | null>(null);
+  const sheetDragRef = React.useRef<{ startTime: number; startX: number; width: number } | null>(null);
   const samplerRef = React.useRef<Tone.Sampler | null>(null);
   const soundingNotesRef = React.useRef<Map<number, string>>(new Map());
 
@@ -287,6 +392,7 @@ function App() {
       setLoop(savedSettings?.loop ?? true);
       setHandMode(savedSettings?.handMode ?? "both");
       setCurrentTime(nextCurrentTime);
+      setManualSheetStart(null);
       setSavedAt(savedSettings?.updatedAt ?? null);
       setIsPlaying(false);
       setLoadError(null);
@@ -318,8 +424,11 @@ function App() {
   const currentBarStart = song ? measureToTime(currentBar, song) : 0;
   const currentBarEnd = song ? measureToTime(Math.min(currentBar + 1, (song?.measures ?? 1) + 1), song) : 1;
   const sheetViewSpan = song ? Math.min(practiceDuration, Math.max((60 / song.tempo) * song.beatsPerMeasure * 2, 6)) : 6;
-  const sheetViewStart = song
+  const automaticSheetViewStart = song
     ? clamp(currentTime - sheetViewSpan * 0.28, practiceStart, Math.max(practiceStart, practiceEnd - sheetViewSpan))
+    : 0;
+  const sheetViewStart = song
+    ? clamp(manualSheetStart ?? automaticSheetViewStart, practiceStart, Math.max(practiceStart, practiceEnd - sheetViewSpan))
     : 0;
   const sheetViewEnd = song ? Math.min(practiceEnd, sheetViewStart + sheetViewSpan) : 1;
   const sheetViewDuration = Math.max(sheetViewEnd - sheetViewStart, 1);
@@ -336,6 +445,14 @@ function App() {
   const savedProgressLabel = savedAt
     ? `Merker: Takt ${savedProgressBar}, ${formatClockTime(currentTime)} gespeichert am ${formatSavedAt(savedAt)}`
     : null;
+
+  React.useEffect(() => {
+    if (!isPlaying) {
+      return;
+    }
+
+    setManualSheetStart(null);
+  }, [isPlaying]);
 
   React.useEffect(() => {
     if (!isPlaying || !song) {
@@ -425,6 +542,8 @@ function App() {
   const sheetNotes = visibleNotes.filter(
     (note) => note.start + note.duration >= sheetViewStart - 0.2 && note.start <= sheetViewEnd + 0.2,
   );
+  const beamGroups = song ? buildBeamGroups(sheetNotes, song, sheetViewStart, sheetViewDuration) : [];
+  const beamedNoteIds = new Set(beamGroups.flatMap((group) => group.ids));
   const visibleBarLines =
     song === null
       ? []
@@ -601,6 +720,42 @@ function App() {
     }
 
     setPracticeRange(fromBar, bar);
+  }
+
+  function handleSheetPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (!song) {
+      return;
+    }
+
+    const bounds = event.currentTarget.getBoundingClientRect();
+
+    sheetDragRef.current = {
+      startTime: sheetViewStart,
+      startX: event.clientX,
+      width: Math.max(bounds.width, 1),
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleSheetPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (!song || sheetDragRef.current === null) {
+      return;
+    }
+
+    const drag = sheetDragRef.current;
+    const deltaSeconds = ((event.clientX - drag.startX) / drag.width) * sheetViewDuration;
+    const maxStart = Math.max(practiceStart, practiceEnd - sheetViewSpan);
+
+    setManualSheetStart(clamp(drag.startTime - deltaSeconds, practiceStart, maxStart));
+  }
+
+  function handleSheetPointerEnd(event: React.PointerEvent<HTMLDivElement>) {
+    if (sheetDragRef.current === null) {
+      return;
+    }
+
+    sheetDragRef.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
   async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -789,7 +944,13 @@ function App() {
             <span>{upcomingNotes.length} naechste Noten im Anflug</span>
           </div>
 
-          <div className="sheet-placeholder">
+          <div
+            className="sheet-placeholder"
+            onPointerCancel={handleSheetPointerEnd}
+            onPointerDown={handleSheetPointerDown}
+            onPointerMove={handleSheetPointerMove}
+            onPointerUp={handleSheetPointerEnd}
+          >
             <div
               className="current-bar-band"
               style={{ left: `${currentBarSheetLeft}%`, width: `${currentBarSheetWidth}%` }}
@@ -820,6 +981,24 @@ function App() {
                   />
                 ))}
             </div>
+            <div className="beam-groups" aria-hidden="true">
+              {beamGroups.map((group, index) => (
+                <span
+                  key={`${group.hand}-beam-${index}-${group.left}`}
+                  className={`beam-group ${group.hand}`}
+                  style={{
+                    left: `${group.left}%`,
+                    top: group.top,
+                    transform: `translateX(${group.stemOffset}px)`,
+                    width: group.width,
+                  }}
+                >
+                  {Array.from({ length: group.flags }, (_, flagIndex) => (
+                    <i key={flagIndex} className={`beam-line beam-${flagIndex + 1}`} />
+                  ))}
+                </span>
+              ))}
+            </div>
             <div className="note-row">
               {sheetNotes.slice(0, 180).map((note, index) => (
                 <span
@@ -828,6 +1007,7 @@ function App() {
                     "sheet-note",
                     note.hand,
                     noteDurationClass(song ? noteDurationInBeats(note, song) : 1),
+                    beamedNoteIds.has(note.id) ? "beamed" : "",
                     activeNoteIds.has(note.id) ? "active" : "",
                     !activeNoteIds.has(note.id) && upcomingNoteIds.has(note.id) ? "upcoming" : "",
                   ]
@@ -835,9 +1015,9 @@ function App() {
                     .join(" ")}
                   title={`${noteName(note.midi)} ${note.trackName}`}
                   style={{
-                    left: `${clamp(((note.start - sheetViewStart) / sheetViewDuration) * 100, 2, 96)}%`,
+                    left: `${noteLeftPercent(note, sheetViewStart, sheetViewDuration)}%`,
                     top: `${noteYPosition(note)}%`,
-                    width: `${clamp(((note.duration / sheetViewDuration) * 100) * 1.2, 18, 72)}px`,
+                    width: `${noteWidthPixels(note, sheetViewDuration)}px`,
                   }}
                 >
                   <i className="note-head" />

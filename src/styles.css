@@ -345,6 +345,13 @@ input {
   overflow: hidden;
   background: #ffffff;
   border-bottom: 1px solid #d7dee5;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.sheet-placeholder:active {
+  cursor: grabbing;
 }
 
 .current-bar-band {
@@ -369,6 +376,46 @@ input {
   bottom: 18%;
   width: 2px;
   background: rgba(81, 96, 111, 0.25);
+}
+
+.beam-groups {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.beam-group {
+  position: absolute;
+  height: 18px;
+}
+
+.beam-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: #1f2933;
+}
+
+.beam-group.left .beam-line {
+  transform: skewY(-3deg);
+}
+
+.beam-group.right .beam-line {
+  transform: skewY(2deg);
+}
+
+.beam-1 {
+  top: 0;
+}
+
+.beam-2 {
+  top: 7px;
+}
+
+.beam-3 {
+  top: 14px;
 }
 
 .staff {
@@ -425,7 +472,10 @@ input {
   border-color: #d99416;
 }
 
-.sheet-note.quarter.upcoming .note-head {
+.sheet-note.quarter.upcoming .note-head,
+.sheet-note.eighth.upcoming .note-head,
+.sheet-note.sixteenth.upcoming .note-head,
+.sheet-note.thirty-second.upcoming .note-head {
   background: #ffc85c;
 }
 
@@ -498,10 +548,41 @@ input {
   top: 48px;
 }
 
+.sheet-note.right .flag-3 {
+  top: 6px;
+}
+
+.sheet-note.left .flag-3 {
+  top: 40px;
+}
+
 .sheet-note.quarter .note-flag,
 .sheet-note.half .note-flag,
-.sheet-note.whole .note-flag {
+.sheet-note.whole .note-flag,
+.sheet-note.beamed .note-flag {
   display: none;
+}
+
+.sheet-note.thirty-second {
+  height: 52px;
+}
+
+.sheet-note.thirty-second .note-head {
+  width: 14px;
+  height: 10px;
+}
+
+.sheet-note.thirty-second.right .note-stem {
+  left: 12px;
+  height: 34px;
+}
+
+.sheet-note.thirty-second.left .note-stem {
+  height: 34px;
+}
+
+.sheet-note.thirty-second.right .note-flag {
+  left: 12px;
 }
 
 .sheet-note.left.active .note-head,
