@@ -61,10 +61,16 @@ type PianoNote = {
 type Song = {
   beatsPerMeasure: number;
   duration: number;
+  keySignature: {
+    accidentals: number;
+    key: string;
+    scale: string;
+  };
   measures: number;
   name: string;
   notes: PianoNote[];
   tempo: number;
+  timeSignature: [number, number];
   tracks: number;
 };
 
@@ -140,10 +146,20 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
+function keySignatureAccidentals(key: string, scale: string) {
+  const majorKeys = ["Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#"];
+  const minorKeys = ["Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#", "G#", "D#", "A#"];
+  const keys = scale === "minor" ? minorKeys : majorKeys;
+  const index = keys.indexOf(key);
+
+  return index === -1 ? 0 : index - 7;
+}
+
 function parseMidi(buffer: ArrayBuffer, fileName: string): Song {
   const midi = new Midi(buffer);
   const firstTempo = midi.header.tempos[0]?.bpm ?? 100;
   const firstSignature = midi.header.timeSignatures[0]?.timeSignature ?? [4, 4];
+  const firstKeySignature = midi.header.keySignatures[0] ?? { key: "C", scale: "major" };
   const beatsPerMeasure = firstSignature[0] * (4 / firstSignature[1]);
   const tracksWithNotes = midi.tracks.filter((track) => track.notes.length > 0);
   const trackAveragePitch = tracksWithNotes.map((track) => {
@@ -179,10 +195,16 @@ function parseMidi(buffer: ArrayBuffer, fileName: string): Song {
   return {
     beatsPerMeasure,
     duration,
+    keySignature: {
+      accidentals: keySignatureAccidentals(firstKeySignature.key, firstKeySignature.scale),
+      key: firstKeySignature.key,
+      scale: firstKeySignature.scale,
+    },
     measures: Math.max(1, Math.ceil(duration / secondsPerMeasure)),
     name: fileName,
     notes,
     tempo: Math.round(firstTempo),
+    timeSignature: [firstSignature[0], firstSignature[1]],
     tracks: tracksWithNotes.length,
   };
 }
@@ -494,6 +516,10 @@ function App() {
   const upcomingPreviewWindow = 0.85;
   const focusFromBar = song ? timeToMeasure(sheetViewStart, song) : 1;
   const focusToBar = song ? timeToMeasure(Math.max(sheetViewEnd - 0.01, sheetViewStart), song) : 1;
+  const keyAccidentalCount = Math.abs(song?.keySignature.accidentals ?? 0);
+  const keyAccidentalSymbol = (song?.keySignature.accidentals ?? 0) >= 0 ? "♯" : "♭";
+  const keyAccidentalOffsets =
+    keyAccidentalSymbol === "♯" ? [26, 31, 23, 28, 33, 25, 30] : [31, 26, 34, 29, 37, 32, 40];
   const savedProgressBar = song ? timeToMeasure(currentTime, song) : 1;
   const savedProgressLabel = savedAt
     ? `Merker: Takt ${savedProgressBar}, ${formatClockTime(currentTime)} gespeichert am ${formatSavedAt(savedAt)}`
@@ -1191,6 +1217,38 @@ function App() {
             onPointerMove={handleSheetPointerMove}
             onPointerUp={handleSheetPointerEnd}
           >
+            {song && (
+              <div className="staff-header" aria-hidden="true">
+                <span className="grand-staff-brace">&#123;</span>
+                <span className="treble-clef">&#119070;</span>
+                <span className="bass-clef">&#119074;</span>
+                <span className="key-signature upper">
+                  {Array.from({ length: keyAccidentalCount }, (_, index) => (
+                    <i key={`upper-key-${index}`} style={{ left: `${index * 10}px`, top: `${keyAccidentalOffsets[index]}%` }}>
+                      {keyAccidentalSymbol}
+                    </i>
+                  ))}
+                </span>
+                <span className="key-signature lower">
+                  {Array.from({ length: keyAccidentalCount }, (_, index) => (
+                    <i
+                      key={`lower-key-${index}`}
+                      style={{ left: `${index * 10}px`, top: `${keyAccidentalOffsets[index] + 36}%` }}
+                    >
+                      {keyAccidentalSymbol}
+                    </i>
+                  ))}
+                </span>
+                <span className="time-signature upper" style={{ left: `${62 + keyAccidentalCount * 10}px` }}>
+                  <i>{song.timeSignature[0]}</i>
+                  <i>{song.timeSignature[1]}</i>
+                </span>
+                <span className="time-signature lower" style={{ left: `${62 + keyAccidentalCount * 10}px` }}>
+                  <i>{song.timeSignature[0]}</i>
+                  <i>{song.timeSignature[1]}</i>
+                </span>
+              </div>
+            )}
             <div
               className="current-bar-band"
               style={{ left: `${currentBarSheetLeft}%`, width: `${currentBarSheetWidth}%` }}
