@@ -85,16 +85,6 @@ type PracticeSettings = {
   updatedAt: number;
 };
 
-type BeamGroup = {
-  flags: number;
-  hand: NoteHand;
-  ids: string[];
-  left: number;
-  stemOffset: number;
-  top: string;
-  width: string;
-};
-
 const keyboardStart = 21;
 const keyboardEnd = 108;
 const pianoSampleBaseUrl = "/audio/piano/";
@@ -230,50 +220,6 @@ function midiToToneNote(midi: number) {
 
 function noteDurationInBeats(note: PianoNote, song: Song) {
   return (note.duration * song.tempo) / 60;
-}
-
-function noteDurationClass(durationInBeats: number) {
-  if (durationInBeats >= 3.5) {
-    return "whole";
-  }
-
-  if (durationInBeats >= 1.75) {
-    return "half";
-  }
-
-  if (durationInBeats >= 0.875) {
-    return "quarter";
-  }
-
-  if (durationInBeats >= 0.4375) {
-    return "eighth";
-  }
-
-  if (durationInBeats >= 0.1875) {
-    return "sixteenth";
-  }
-
-  return "thirty-second";
-}
-
-function noteFlags(durationInBeats: number) {
-  if (durationInBeats < 0.1875) {
-    return 3;
-  }
-
-  if (durationInBeats < 0.4375) {
-    return 2;
-  }
-
-  if (durationInBeats < 0.875) {
-    return 1;
-  }
-
-  return 0;
-}
-
-function noteYPosition(note: PianoNote) {
-  return note.hand === "left" ? 64 - (note.midi - 40) * 0.25 : 34 - (note.midi - 70) * 0.25;
 }
 
 function vexNoteKey(midi: number) {
@@ -412,83 +358,6 @@ function VexScore({
   }, [activeNoteIds, notes, song, upcomingNoteIds, viewEnd, viewStart]);
 
   return <div className="vex-score" ref={containerRef} />;
-}
-
-function noteLeftPercent(note: PianoNote, viewStart: number, viewDuration: number) {
-  return clamp(((note.start - viewStart) / viewDuration) * 100, 2, 96);
-}
-
-function noteWidthPixels(note: PianoNote, viewDuration: number) {
-  return clamp(((note.duration / viewDuration) * 100) * 1.2, 18, 72);
-}
-
-function noteStemOffsetPixels(note: PianoNote) {
-  return note.hand === "right" ? 15 : 2;
-}
-
-function measureIndexForTime(time: number, song: Song) {
-  return Math.floor(time / ((60 / song.tempo) * song.beatsPerMeasure));
-}
-
-function buildBeamGroups(notes: PianoNote[], song: Song, viewStart: number, viewDuration: number) {
-  const shortNotes = notes
-    .map((note) => ({
-      flags: noteFlags(noteDurationInBeats(note, song)),
-      measureIndex: measureIndexForTime(note.start, song),
-      note,
-    }))
-    .filter(({ flags }) => flags > 0)
-    .sort((left, right) => left.note.start - right.note.start || left.note.midi - right.note.midi);
-  const groups: BeamGroup[] = [];
-  let currentGroup: typeof shortNotes = [];
-
-  function flushGroup() {
-    if (currentGroup.length < 2) {
-      currentGroup = [];
-      return;
-    }
-
-    const firstNote = currentGroup[0].note;
-    const lastNote = currentGroup[currentGroup.length - 1].note;
-    const firstLeft = noteLeftPercent(firstNote, viewStart, viewDuration);
-    const lastLeft = noteLeftPercent(lastNote, viewStart, viewDuration);
-    const firstStemOffset = noteStemOffsetPixels(firstNote);
-    const lastStemOffset = noteStemOffsetPixels(lastNote);
-    const averageY =
-      currentGroup.reduce((sum, { note }) => sum + noteYPosition(note), 0) / Math.max(1, currentGroup.length);
-
-    groups.push({
-      flags: Math.max(...currentGroup.map(({ flags }) => flags)),
-      hand: firstNote.hand,
-      ids: currentGroup.map(({ note }) => note.id),
-      left: firstLeft,
-      stemOffset: firstStemOffset,
-      top:
-        firstNote.hand === "left"
-          ? `calc(${clamp(averageY, 12, 80)}% + 66px)`
-          : `calc(${clamp(averageY, 12, 80)}% - 12px)`,
-      width: `calc(${Math.max(2, lastLeft - firstLeft)}% + ${lastStemOffset - firstStemOffset}px)`,
-    });
-    currentGroup = [];
-  }
-
-  shortNotes.forEach((entry) => {
-    const previous = currentGroup[currentGroup.length - 1];
-    const startsNewGroup =
-      previous &&
-      (previous.note.hand !== entry.note.hand ||
-        previous.measureIndex !== entry.measureIndex ||
-        entry.note.start - previous.note.start > (60 / song.tempo) * 0.9);
-
-    if (startsNewGroup) {
-      flushGroup();
-    }
-
-    currentGroup.push(entry);
-  });
-  flushGroup();
-
-  return groups;
 }
 
 function formatClockTime(seconds: number) {
@@ -655,10 +524,6 @@ function App() {
   const upcomingPreviewWindow = 0.85;
   const focusFromBar = song ? timeToMeasure(sheetViewStart, song) : 1;
   const focusToBar = song ? timeToMeasure(Math.max(sheetViewEnd - 0.01, sheetViewStart), song) : 1;
-  const keyAccidentalCount = Math.abs(song?.keySignature.accidentals ?? 0);
-  const keyAccidentalSymbol = (song?.keySignature.accidentals ?? 0) >= 0 ? "♯" : "♭";
-  const keyAccidentalOffsets =
-    keyAccidentalSymbol === "♯" ? [26, 31, 23, 28, 33, 25, 30] : [31, 26, 34, 29, 37, 32, 40];
   const savedProgressBar = song ? timeToMeasure(currentTime, song) : 1;
   const savedProgressLabel = savedAt
     ? `Merker: Takt ${savedProgressBar}, ${formatClockTime(currentTime)} gespeichert am ${formatSavedAt(savedAt)}`
@@ -767,8 +632,6 @@ function App() {
   const sheetNotes = visibleNotes.filter(
     (note) => note.start + note.duration >= sheetViewStart - 0.2 && note.start <= sheetViewEnd + 0.2,
   );
-  const beamGroups = song ? buildBeamGroups(sheetNotes, song, sheetViewStart, sheetViewDuration) : [];
-  const beamedNoteIds = new Set(beamGroups.flatMap((group) => group.ids));
   const visibleBarLines =
     song === null
       ? []
