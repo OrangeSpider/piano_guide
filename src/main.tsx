@@ -2,6 +2,7 @@ import { Midi } from "@tonejs/midi";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import * as Tone from "tone";
+import { Beam, Renderer, Stave, StaveConnector, StaveNote, TickContext } from "vexflow";
 import {
   ChevronLeft,
   ChevronRight,
@@ -273,6 +274,144 @@ function noteFlags(durationInBeats: number) {
 
 function noteYPosition(note: PianoNote) {
   return note.hand === "left" ? 64 - (note.midi - 40) * 0.25 : 34 - (note.midi - 70) * 0.25;
+}
+
+function vexNoteKey(midi: number) {
+  const match = noteName(midi).match(/^([A-G])(#?)(-?\d+)$/);
+
+  if (!match) {
+    return "c/4";
+  }
+
+  return `${match[1].toLowerCase()}${match[2]}/${match[3]}`;
+}
+
+function vexDuration(note: PianoNote, song: Song) {
+  const beats = noteDurationInBeats(note, song);
+
+  if (beats >= 3.5) return "w";
+  if (beats >= 1.75) return "h";
+  if (beats >= 0.875) return "q";
+  if (beats >= 0.4375) return "8";
+  if (beats >= 0.1875) return "16";
+  return "32";
+}
+
+function groupNotesByStart(notes: PianoNote[]) {
+  const groups = new Map<number, PianoNote[]>();
+
+  notes.forEach((note) => {
+    const key = Math.round(note.start * 100);
+    const group = groups.get(key) ?? [];
+    group.push(note);
+    groups.set(key, group);
+  });
+
+  return Array.from(groups.values()).sort((left, right) => left[0].start - right[0].start);
+}
+
+function VexScore({
+  activeNoteIds,
+  notes,
+  song,
+  upcomingNoteIds,
+  viewEnd,
+  viewStart,
+}: {
+  activeNoteIds: Set<string>;
+  notes: PianoNote[];
+  song: Song;
+  upcomingNoteIds: Set<string>;
+  viewEnd: number;
+  viewStart: number;
+}) {
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useLayoutEffect(() => {
+    const container = containerRef.current;
+
+    if (!container) return;
+
+    container.replaceChildren();
+    const width = Math.max(container.clientWidth, 640);
+    const height = Math.max(container.clientHeight, 240);
+    const renderer = new Renderer(container, Renderer.Backends.SVG);
+    renderer.resize(width, height);
+    const context = renderer.getContext();
+    const staveWidth = width - 30;
+    const treble = new Stave(14, 24, staveWidth);
+    const bass = new Stave(14, 134, staveWidth);
+    const keySignature = song.keySignature.scale === "minor" ? `${song.keySignature.key}m` : song.keySignature.key;
+    const timeSignature = `${song.timeSignature[0]}/${song.timeSignature[1]}`;
+
+    treble.addClef("treble").addKeySignature(keySignature).addTimeSignature(timeSignature);
+    bass.addClef("bass").addKeySignature(keySignature).addTimeSignature(timeSignature);
+    treble.setContext(context).draw();
+    bass.setContext(context).draw();
+    new StaveConnector(treble, bass).setType("brace").setContext(context).draw();
+    new StaveConnector(treble, bass).setType("singleLeft").setContext(context).draw();
+
+    const drawHand = (hand: NoteHand, stave: Stave, clef: "treble" | "bass") => {
+      const groups = groupNotesByStart(notes.filter((note) => note.hand === hand)).slice(0, 64);
+      const staveNotes = groups.map((group) => {
+        const staveNote = new StaveNote({
+          autoStem: true,
+          clef,
+          duration: vexDuration(group[0], song),
+          keys: [...group].sort((left, right) => left.midi - right.midi).map((note) => vexNoteKey(note.midi)),
+        });
+        const isActive = group.some((note) => activeNoteIds.has(note.id));
+        const isUpcoming = !isActive && group.some((note) => upcomingNoteIds.has(note.id));
+
+        if (isActive) {
+          staveNote.setStyle({ fillStyle: hand === "left" ? "#72a7d8" : "#8bdc48", strokeStyle: hand === "left" ? "#72a7d8" : "#8bdc48" });
+        } else if (isUpcoming) {
+          staveNote.setStyle({ fillStyle: "#d99416", strokeStyle: "#d99416" });
+        }
+
+        return { duration: group[0].duration, staveNote, start: group[0].start };
+      });
+
+      if (staveNotes.length > 0) {
+        const noteStartX = stave.getNoteStartX() + 12;
+        const noteEndX = stave.getNoteEndX() - 12;
+        const viewDuration = Math.max(viewEnd - viewStart, 0.1);
+
+        staveNotes.forEach(({ staveNote, start }) => {
+          const progress = clamp((start - viewStart) / viewDuration, 0, 1);
+          const tickContext = new TickContext();
+
+          staveNote.setStave(stave).setContext(context);
+          tickContext.addTickable(staveNote).preFormat().setX(noteStartX + progress * (noteEndX - noteStartX));
+          staveNote.draw();
+        });
+
+        const secondsPerBeat = 60 / song.tempo;
+        const beamableGroups = new Map<number, StaveNote[]>();
+
+        staveNotes.forEach(({ duration, staveNote, start }) => {
+          if (duration > secondsPerBeat * 0.55) return;
+
+          // A small forward tolerance keeps a grace note attached to the beat it introduces.
+          const beat = Math.floor((start + secondsPerBeat * 0.12) / secondsPerBeat);
+          const group = beamableGroups.get(beat) ?? [];
+          group.push(staveNote);
+          beamableGroups.set(beat, group);
+        });
+
+        beamableGroups.forEach((beamNotes) => {
+          if (beamNotes.length < 2) return;
+
+          new Beam(beamNotes).setContext(context).draw();
+        });
+      }
+    };
+
+    drawHand("right", treble, "treble");
+    drawHand("left", bass, "bass");
+  }, [activeNoteIds, notes, song, upcomingNoteIds, viewEnd, viewStart]);
+
+  return <div className="vex-score" ref={containerRef} />;
 }
 
 function noteLeftPercent(note: PianoNote, viewStart: number, viewDuration: number) {
@@ -1218,55 +1357,19 @@ function App() {
             onPointerUp={handleSheetPointerEnd}
           >
             {song && (
-              <div className="staff-header" aria-hidden="true">
-                <span className="grand-staff-brace">&#123;</span>
-                <span className="treble-clef">&#119070;</span>
-                <span className="bass-clef">&#119074;</span>
-                <span className="key-signature upper">
-                  {Array.from({ length: keyAccidentalCount }, (_, index) => (
-                    <i key={`upper-key-${index}`} style={{ left: `${index * 10}px`, top: `${keyAccidentalOffsets[index]}%` }}>
-                      {keyAccidentalSymbol}
-                    </i>
-                  ))}
-                </span>
-                <span className="key-signature lower">
-                  {Array.from({ length: keyAccidentalCount }, (_, index) => (
-                    <i
-                      key={`lower-key-${index}`}
-                      style={{ left: `${index * 10}px`, top: `${keyAccidentalOffsets[index] + 36}%` }}
-                    >
-                      {keyAccidentalSymbol}
-                    </i>
-                  ))}
-                </span>
-                <span className="time-signature upper" style={{ left: `${62 + keyAccidentalCount * 10}px` }}>
-                  <i>{song.timeSignature[0]}</i>
-                  <i>{song.timeSignature[1]}</i>
-                </span>
-                <span className="time-signature lower" style={{ left: `${62 + keyAccidentalCount * 10}px` }}>
-                  <i>{song.timeSignature[0]}</i>
-                  <i>{song.timeSignature[1]}</i>
-                </span>
-              </div>
+              <VexScore
+                activeNoteIds={activeNoteIds}
+                notes={sheetNotes}
+                song={song}
+                upcomingNoteIds={upcomingNoteIds}
+                viewEnd={sheetViewEnd}
+                viewStart={sheetViewStart}
+              />
             )}
             <div
               className="current-bar-band"
               style={{ left: `${currentBarSheetLeft}%`, width: `${currentBarSheetWidth}%` }}
             />
-            <div className="staff">
-              <span />
-              <span />
-              <span />
-              <span />
-              <span />
-            </div>
-            <div className="staff lower">
-              <span />
-              <span />
-              <span />
-              <span />
-              <span />
-            </div>
             <div className="bar-lines" aria-hidden="true">
               {song &&
                 visibleBarLines.map((bar) => (
@@ -1280,53 +1383,6 @@ function App() {
                     <i>{bar}</i>
                   </span>
                 ))}
-            </div>
-            <div className="beam-groups" aria-hidden="true">
-              {beamGroups.map((group, index) => (
-                <span
-                  key={`${group.hand}-beam-${index}-${group.left}`}
-                  className={`beam-group ${group.hand}`}
-                  style={{
-                    left: `${group.left}%`,
-                    top: group.top,
-                    transform: `translateX(${group.stemOffset}px)`,
-                    width: group.width,
-                  }}
-                >
-                  {Array.from({ length: group.flags }, (_, flagIndex) => (
-                    <i key={flagIndex} className={`beam-line beam-${flagIndex + 1}`} />
-                  ))}
-                </span>
-              ))}
-            </div>
-            <div className="note-row">
-              {sheetNotes.slice(0, 180).map((note, index) => (
-                <span
-                  key={`${note.midi}-${note.start}-${index}`}
-                  className={[
-                    "sheet-note",
-                    note.hand,
-                    noteDurationClass(song ? noteDurationInBeats(note, song) : 1),
-                    beamedNoteIds.has(note.id) ? "beamed" : "",
-                    activeNoteIds.has(note.id) ? "active" : "",
-                    !activeNoteIds.has(note.id) && upcomingNoteIds.has(note.id) ? "upcoming" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  title={`${noteName(note.midi)} ${note.trackName}`}
-                  style={{
-                    left: `${noteLeftPercent(note, sheetViewStart, sheetViewDuration)}%`,
-                    top: `${noteYPosition(note)}%`,
-                    width: `${noteWidthPixels(note, sheetViewDuration)}px`,
-                  }}
-                >
-                  <i className="note-head" />
-                  <i className="note-stem" />
-                  {Array.from({ length: noteFlags(song ? noteDurationInBeats(note, song) : 1) }, (_, flagIndex) => (
-                    <i key={flagIndex} className={`note-flag flag-${flagIndex + 1}`} />
-                  ))}
-                </span>
-              ))}
             </div>
           </div>
 

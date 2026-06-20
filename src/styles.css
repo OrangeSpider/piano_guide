@@ -389,6 +389,19 @@ input {
   cursor: grabbing;
 }
 
+.vex-score {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.vex-score svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .staff-header {
   position: absolute;
   inset: 0 auto 0 0;
