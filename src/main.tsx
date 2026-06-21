@@ -87,6 +87,8 @@ type PracticeSettings = {
 
 const keyboardStart = 21;
 const keyboardEnd = 108;
+const whiteKeyCount = 52;
+const blackKeyWidthPercent = 1.75;
 const pianoSampleBaseUrl = "/audio/piano/";
 const pianoSampleUrls = {
   A0: "A0.mp3",
@@ -135,6 +137,38 @@ function noteName(midi: number) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function countWhiteKeysBefore(midi: number) {
+  let count = 0;
+
+  for (let value = keyboardStart; value < midi; value += 1) {
+    if (!isBlackKey(value)) {
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
+function keyLayout(midi: number) {
+  const whiteKeyWidthPercent = 100 / whiteKeyCount;
+
+  if (isBlackKey(midi)) {
+    const left = countWhiteKeysBefore(midi) * whiteKeyWidthPercent - blackKeyWidthPercent / 2;
+
+    return {
+      left: clamp(left, 0, 100 - blackKeyWidthPercent),
+      width: blackKeyWidthPercent,
+    };
+  }
+
+  const left = countWhiteKeysBefore(midi) * whiteKeyWidthPercent;
+
+  return {
+    left,
+    width: whiteKeyWidthPercent,
+  };
 }
 
 function keySignatureAccidentals(key: string, scale: string) {
@@ -506,15 +540,30 @@ function App() {
   const progressInLoop = song ? clamp(((currentTime - practiceStart) / practiceDuration) * 100, 0, 100) : 0;
   const currentBarStart = song ? measureToTime(currentBar, song) : 0;
   const currentBarEnd = song ? measureToTime(Math.min(currentBar + 1, (song?.measures ?? 1) + 1), song) : 1;
-  const sheetViewSpan = song ? Math.min(practiceDuration, Math.max((60 / song.tempo) * song.beatsPerMeasure * 2, 6)) : 6;
-  const automaticSheetViewStart = song
-    ? clamp(currentTime - sheetViewSpan * 0.28, practiceStart, Math.max(practiceStart, practiceEnd - sheetViewSpan))
-    : 0;
+  const measuresPerSheetPage = 3;
+  const automaticSheetPageStartBar = song
+    ? clamp(
+        fromBar + Math.floor((currentBar - fromBar) / measuresPerSheetPage) * measuresPerSheetPage,
+        fromBar,
+        toBar,
+      )
+    : 1;
+  const automaticSheetPageEndBar = song
+    ? Math.min(automaticSheetPageStartBar + measuresPerSheetPage, toBar + 1)
+    : 2;
+  const sheetViewSpan = song
+    ? Math.max(
+        measureToTime(automaticSheetPageEndBar, song) - measureToTime(automaticSheetPageStartBar, song),
+        0.1,
+      )
+    : 1;
+  const automaticSheetViewStart = song ? measureToTime(automaticSheetPageStartBar, song) : 0;
   const sheetViewStart = song
     ? clamp(manualSheetStart ?? automaticSheetViewStart, practiceStart, Math.max(practiceStart, practiceEnd - sheetViewSpan))
     : 0;
   const sheetViewEnd = song ? Math.min(practiceEnd, sheetViewStart + sheetViewSpan) : 1;
   const sheetViewDuration = Math.max(sheetViewEnd - sheetViewStart, 1);
+  const sheetPlayheadLeft = song ? clamp(((currentTime - sheetViewStart) / sheetViewDuration) * 100, 0, 100) : 0;
   const currentBarSheetLeft = song ? clamp(((currentBarStart - sheetViewStart) / sheetViewDuration) * 100, 0, 100) : 0;
   const currentBarSheetWidth = song
     ? clamp(((currentBarEnd - currentBarStart) / sheetViewDuration) * 100, 6, 100 - currentBarSheetLeft)
@@ -983,7 +1032,7 @@ function App() {
   }
 
   function handleSheetPointerDown(event: React.PointerEvent<HTMLDivElement>) {
-    if (!song) {
+    if (!song || isPlaying) {
       return;
     }
 
@@ -1208,7 +1257,7 @@ function App() {
             </strong>
             <span>Aktuell in Takt {currentBar}</span>
             <span>{progressInLoop.toFixed(0)}% durch den Uebebereich</span>
-            <span>Fokusfenster {focusFromBar}-{focusToBar}</span>
+            <span>Notenzeile {focusFromBar}-{focusToBar}</span>
             <span>{upcomingNotes.length} naechste Noten im Anflug</span>
           </div>
 
@@ -1233,6 +1282,9 @@ function App() {
               className="current-bar-band"
               style={{ left: `${currentBarSheetLeft}%`, width: `${currentBarSheetWidth}%` }}
             />
+            <div className="sheet-playhead" style={{ left: `${sheetPlayheadLeft}%` }} aria-hidden="true">
+              <span />
+            </div>
             <div className="bar-lines" aria-hidden="true">
               {song &&
                 visibleBarLines.map((bar) => (
@@ -1258,6 +1310,7 @@ function App() {
                 key={`${note.midi}-fall-${note.start}-${index}`}
                 className={[
                   "fall-note",
+                  isBlackKey(note.midi) ? "black" : "white",
                   note.hand,
                   activeNoteIds.has(note.id) ? "active" : "",
                   !activeNoteIds.has(note.id) && upcomingNoteIds.has(note.id) ? "upcoming" : "",
@@ -1266,51 +1319,51 @@ function App() {
                   .join(" ")}
                 title={noteName(note.midi)}
                 style={{
-                  left: `${((note.midi - keyboardStart) / (keyboardEnd - keyboardStart)) * 100}%`,
+                  left: `${keyLayout(note.midi).left}%`,
+                  width: `${isBlackKey(note.midi) ? keyLayout(note.midi).width : keyLayout(note.midi).width * 0.72}%`,
                   height: `${clamp(24 + note.duration * 32, 18, 120)}px`,
-                  transform: `translateY(${(note.start - currentTime) * 70 + 120}px)`,
+                  transform: `translateY(${(currentTime - note.start) * 70}px)`,
                 }}
               />
             ))}
           </div>
-        </section>
-      </section>
-
-      <section className="keyboard" aria-label="Virtuelle Klaviatur">
-        <div className="white-keys">
-          {whiteKeys.map((midi) => (
-            <div
-              key={midi}
-              className={[
-                "white-key",
-                activeMidiNotes.has(midi) ? "active" : "",
-                !activeMidiNotes.has(midi) && upcomingMidiNotes.has(midi) ? "upcoming" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-            >
-              {noteName(midi).startsWith("C") && <span>{noteName(midi)}</span>}
-              {!activeMidiNotes.has(midi) && upcomingMidiNotes.has(midi) ? <i aria-hidden="true" /> : null}
+          <section className="keyboard" aria-label="Virtuelle Klaviatur">
+            <div className="white-keys">
+              {whiteKeys.map((midi) => (
+                <div
+                  key={midi}
+                  className={[
+                    "white-key",
+                    activeMidiNotes.has(midi) ? "active" : "",
+                    !activeMidiNotes.has(midi) && upcomingMidiNotes.has(midi) ? "upcoming" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                >
+                  {noteName(midi).startsWith("C") && <span>{noteName(midi)}</span>}
+                  {!activeMidiNotes.has(midi) && upcomingMidiNotes.has(midi) ? <i aria-hidden="true" /> : null}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <div className="black-keys">
-          {allKeys.map((midi) =>
-            isBlackKey(midi) ? (
-              <div
-                key={midi}
-                className={[
-                  "black-key",
-                  activeMidiNotes.has(midi) ? "active" : "",
-                  !activeMidiNotes.has(midi) && upcomingMidiNotes.has(midi) ? "upcoming" : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-                style={{ left: `${((midi - keyboardStart) / (keyboardEnd - keyboardStart + 1)) * 100}%` }}
-              />
-            ) : null,
-          )}
-        </div>
+            <div className="black-keys">
+              {allKeys.map((midi) =>
+                isBlackKey(midi) ? (
+                  <div
+                    key={midi}
+                    className={[
+                      "black-key",
+                      activeMidiNotes.has(midi) ? "active" : "",
+                      !activeMidiNotes.has(midi) && upcomingMidiNotes.has(midi) ? "upcoming" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                    style={{ left: `${keyLayout(midi).left}%` }}
+                  />
+                ) : null,
+              )}
+            </div>
+          </section>
+        </section>
       </section>
 
       <footer className="statusbar">

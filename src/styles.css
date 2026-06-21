@@ -309,7 +309,7 @@ input {
 
 .practice-view {
   display: grid;
-  grid-template-rows: 44px minmax(44px, auto) minmax(180px, 1.2fr) minmax(120px, 0.8fr);
+  grid-template-rows: 44px minmax(44px, auto) minmax(180px, 1.2fr) minmax(120px, 0.8fr) 174px;
   min-height: 0;
   min-width: 0;
   background: #f8fafc;
@@ -389,7 +389,32 @@ input {
   cursor: grabbing;
 }
 
+.sheet-playhead {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  z-index: 4;
+  width: 2px;
+  background: #d99416;
+  box-shadow: 0 0 0 1px rgba(217, 148, 22, 0.15);
+  pointer-events: none;
+  transform: translateX(-1px);
+}
+
+.sheet-playhead span {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-top: 7px solid #d99416;
+  border-right: 5px solid transparent;
+  border-left: 5px solid transparent;
+  transform: translate(-50%, -2px);
+}
+
 .vex-score {
+
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -753,13 +778,14 @@ input {
     linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px) 0 0 / 48px 100%,
     linear-gradient(180deg, rgba(57, 184, 237, 0.12), transparent 26%),
     #25313b;
+  border-top: 1px solid #d7dee5;
 }
 
 .strike-line {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 34px;
+  bottom: 0;
   height: 0;
   pointer-events: none;
   z-index: 2;
@@ -774,11 +800,18 @@ input {
 
 .fall-note {
   position: absolute;
-  top: 14px;
-  width: 18px;
-  border-radius: 6px;
+  bottom: 0;
+  border-radius: 6px 6px 3px 3px;
   opacity: 0.82;
   transition: box-shadow 120ms ease, opacity 120ms ease, filter 120ms ease, transform 120ms ease;
+}
+
+.fall-note.white {
+  margin-left: 0.269%;
+}
+
+.fall-note.black {
+  z-index: 1;
 }
 
 .fall-note.left {
