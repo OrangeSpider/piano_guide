@@ -85,6 +85,12 @@ type PracticeSettings = {
   updatedAt: number;
 };
 
+type SheetLayout = {
+  containerWidth: number;
+  noteEndX: number;
+  noteStartX: number;
+};
+
 const keyboardStart = 21;
 const keyboardEnd = 108;
 const whiteKeyCount = 52;
@@ -293,6 +299,7 @@ function groupNotesByStart(notes: PianoNote[]) {
 function VexScore({
   activeNoteIds,
   notes,
+  onLayout,
   song,
   upcomingNoteIds,
   viewEnd,
@@ -300,6 +307,7 @@ function VexScore({
 }: {
   activeNoteIds: Set<string>;
   notes: PianoNote[];
+  onLayout: (layout: SheetLayout) => void;
   song: Song;
   upcomingNoteIds: Set<string>;
   viewEnd: number;
@@ -330,6 +338,10 @@ function VexScore({
     bass.setContext(context).draw();
     new StaveConnector(treble, bass).setType("brace").setContext(context).draw();
     new StaveConnector(treble, bass).setType("singleLeft").setContext(context).draw();
+    const noteStartX = treble.getNoteStartX() + 12;
+    const noteEndX = treble.getNoteEndX() - 12;
+
+    onLayout({ containerWidth: width, noteEndX, noteStartX });
 
     const drawHand = (hand: NoteHand, stave: Stave, clef: "treble" | "bass") => {
       const groups = groupNotesByStart(notes.filter((note) => note.hand === hand)).slice(0, 64);
@@ -353,8 +365,6 @@ function VexScore({
       });
 
       if (staveNotes.length > 0) {
-        const noteStartX = stave.getNoteStartX() + 12;
-        const noteEndX = stave.getNoteEndX() - 12;
         const viewDuration = Math.max(viewEnd - viewStart, 0.1);
 
         staveNotes.forEach(({ staveNote, start }) => {
@@ -389,7 +399,7 @@ function VexScore({
 
     drawHand("right", treble, "treble");
     drawHand("left", bass, "bass");
-  }, [activeNoteIds, notes, song, upcomingNoteIds, viewEnd, viewStart]);
+  }, [activeNoteIds, notes, onLayout, song, upcomingNoteIds, viewEnd, viewStart]);
 
   return <div className="vex-score" ref={containerRef} />;
 }
@@ -486,6 +496,7 @@ function App() {
   const [audioLoading, setAudioLoading] = React.useState(false);
   const [audioError, setAudioError] = React.useState<string | null>(null);
   const [manualSheetStart, setManualSheetStart] = React.useState<number | null>(null);
+  const [sheetLayout, setSheetLayout] = React.useState<SheetLayout | null>(null);
   const [voiceListening, setVoiceListening] = React.useState(false);
   const [voiceStatus, setVoiceStatus] = React.useState("Sprachsteuerung bereit");
   const sheetDragRef = React.useRef<{ startTime: number; startX: number; width: number } | null>(null);
@@ -510,12 +521,28 @@ function App() {
       setHandMode(savedSettings?.handMode ?? "both");
       setCurrentTime(nextCurrentTime);
       setManualSheetStart(null);
+      setSheetLayout(null);
       setSavedAt(savedSettings?.updatedAt ?? null);
       setIsPlaying(false);
       setLoadError(null);
     } catch {
       setLoadError("Die MIDI-Datei konnte nicht gelesen werden.");
     }
+  }, []);
+
+  const handleSheetLayout = React.useCallback((nextLayout: SheetLayout) => {
+    setSheetLayout((currentLayout) => {
+      if (
+        currentLayout &&
+        currentLayout.containerWidth === nextLayout.containerWidth &&
+        currentLayout.noteStartX === nextLayout.noteStartX &&
+        currentLayout.noteEndX === nextLayout.noteEndX
+      ) {
+        return currentLayout;
+      }
+
+      return nextLayout;
+    });
   }, []);
 
   React.useEffect(() => {
@@ -540,10 +567,11 @@ function App() {
   const progressInLoop = song ? clamp(((currentTime - practiceStart) / practiceDuration) * 100, 0, 100) : 0;
   const currentBarStart = song ? measureToTime(currentBar, song) : 0;
   const currentBarEnd = song ? measureToTime(Math.min(currentBar + 1, (song?.measures ?? 1) + 1), song) : 1;
-  const measuresPerSheetPage = 3;
+  const measuresPerSheetPage = 4;
+  const measuresPerSheetJump = 3;
   const automaticSheetPageStartBar = song
     ? clamp(
-        fromBar + Math.floor((currentBar - fromBar) / measuresPerSheetPage) * measuresPerSheetPage,
+        fromBar + Math.floor((currentBar - fromBar) / measuresPerSheetJump) * measuresPerSheetJump,
         fromBar,
         toBar,
       )
@@ -563,10 +591,10 @@ function App() {
     : 0;
   const sheetViewEnd = song ? Math.min(practiceEnd, sheetViewStart + sheetViewSpan) : 1;
   const sheetViewDuration = Math.max(sheetViewEnd - sheetViewStart, 1);
-  const sheetPlayheadLeft = song ? clamp(((currentTime - sheetViewStart) / sheetViewDuration) * 100, 0, 100) : 0;
-  const currentBarSheetLeft = song ? clamp(((currentBarStart - sheetViewStart) / sheetViewDuration) * 100, 0, 100) : 0;
-  const currentBarSheetWidth = song
-    ? clamp(((currentBarEnd - currentBarStart) / sheetViewDuration) * 100, 6, 100 - currentBarSheetLeft)
+  const rawSheetPlayheadProgress = song ? clamp((currentTime - sheetViewStart) / sheetViewDuration, 0, 1) : 0;
+  const currentBarSheetStartProgress = song ? clamp((currentBarStart - sheetViewStart) / sheetViewDuration, 0, 1) : 0;
+  const currentBarSheetEndProgress = song
+    ? clamp((currentBarEnd - sheetViewStart) / sheetViewDuration, currentBarSheetStartProgress, 1)
     : 0;
   const fallingWindowLead = song ? Math.min(practiceDuration * 0.6, 4) : 4;
   const fallingWindowTail = 0.45;
@@ -681,6 +709,10 @@ function App() {
   const sheetNotes = visibleNotes.filter(
     (note) => note.start + note.duration >= sheetViewStart - 0.2 && note.start <= sheetViewEnd + 0.2,
   );
+  const firstSheetNote = visibleNotes.find((note) => note.start >= sheetViewStart && note.start <= sheetViewEnd);
+  const firstSheetNoteProgress = firstSheetNote ? clamp((firstSheetNote.start - sheetViewStart) / sheetViewDuration, 0, 1) : null;
+  const sheetPlayheadProgress =
+    firstSheetNoteProgress === null ? rawSheetPlayheadProgress : Math.max(rawSheetPlayheadProgress, firstSheetNoteProgress);
   const visibleBarLines =
     song === null
       ? []
@@ -696,6 +728,25 @@ function App() {
     (midi) => !isBlackKey(midi),
   );
   const allKeys = Array.from({ length: keyboardEnd - keyboardStart + 1 }, (_, index) => keyboardStart + index);
+  const sheetNoteTrackWidth = sheetLayout ? Math.max(sheetLayout.noteEndX - sheetLayout.noteStartX, 1) : null;
+
+  function sheetOverlayLeft(progress: number) {
+    if (sheetLayout && sheetNoteTrackWidth !== null) {
+      return `${sheetLayout.noteStartX + progress * sheetNoteTrackWidth}px`;
+    }
+
+    return `${progress * 100}%`;
+  }
+
+  function sheetOverlayWidth(startProgress: number, endProgress: number) {
+    const progressWidth = Math.max(endProgress - startProgress, 0);
+
+    if (sheetLayout && sheetNoteTrackWidth !== null) {
+      return `${Math.max(progressWidth * sheetNoteTrackWidth, 2)}px`;
+    }
+
+    return `${progressWidth * 100}%`;
+  }
 
   const releaseAudio = React.useCallback(() => {
     soundingNotesRef.current.forEach((toneNote) => {
@@ -1272,6 +1323,7 @@ function App() {
               <VexScore
                 activeNoteIds={activeNoteIds}
                 notes={sheetNotes}
+                onLayout={handleSheetLayout}
                 song={song}
                 upcomingNoteIds={upcomingNoteIds}
                 viewEnd={sheetViewEnd}
@@ -1280,9 +1332,12 @@ function App() {
             )}
             <div
               className="current-bar-band"
-              style={{ left: `${currentBarSheetLeft}%`, width: `${currentBarSheetWidth}%` }}
+              style={{
+                left: sheetOverlayLeft(currentBarSheetStartProgress),
+                width: sheetOverlayWidth(currentBarSheetStartProgress, currentBarSheetEndProgress),
+              }}
             />
-            <div className="sheet-playhead" style={{ left: `${sheetPlayheadLeft}%` }} aria-hidden="true">
+            <div className="sheet-playhead" style={{ left: sheetOverlayLeft(sheetPlayheadProgress) }} aria-hidden="true">
               <span />
             </div>
             <div className="bar-lines" aria-hidden="true">
@@ -1292,7 +1347,7 @@ function App() {
                     key={`sheet-bar-${bar}`}
                     className="bar-line"
                     style={{
-                      left: `${clamp(((measureToTime(bar, song) - sheetViewStart) / sheetViewDuration) * 100, 0, 100)}%`,
+                      left: sheetOverlayLeft(clamp((measureToTime(bar, song) - sheetViewStart) / sheetViewDuration, 0, 1)),
                     }}
                   >
                     <i>{bar}</i>
