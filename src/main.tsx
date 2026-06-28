@@ -21,6 +21,9 @@ import "./styles.css";
 
 type HandMode = "both" | "left" | "right";
 type NoteHand = "left" | "right";
+type FingerNumber = 1 | 2 | 3 | 4 | 5;
+type FingeringMode = "bar-start" | "detail";
+type FingeringSource = "manual" | "voice" | "auto";
 type SpeechRecognitionResultLike = {
   isFinal: boolean;
   [index: number]: {
@@ -57,6 +60,32 @@ type PianoNote = {
   start: number;
   trackName: string;
   velocity: number;
+};
+
+type FingerAnnotation = {
+  finger: FingerNumber;
+  hand: NoteHand;
+  noteId: string;
+  source: FingeringSource;
+  updatedAt: number;
+};
+
+type FingeringMap = Record<string, FingerAnnotation>;
+
+type FingeringGroup = {
+  bar: number;
+  id: string;
+  leftNotes: PianoNote[];
+  notes: PianoNote[];
+  rightNotes: PianoNote[];
+  start: number;
+};
+
+type FingerAssignmentResult = {
+  assignedCount: number;
+  leftFingers: FingerNumber[];
+  nextGroup: FingeringGroup | null;
+  rightFingers: FingerNumber[];
 };
 
 type Song = {
@@ -129,7 +158,24 @@ const pianoSampleUrls = {
   C8: "C8.mp3",
 } as const;
 const practiceStoragePrefix = "piano-guide:practice:";
+const fingeringStoragePrefix = "piano-guide:fingering:";
 const samplePath = "/samples/Ungarische.mid";
+const numberWordToFinger = new Map<string, FingerNumber>([
+  ["1", 1],
+  ["eins", 1],
+  ["ein", 1],
+  ["eine", 1],
+  ["einen", 1],
+  ["2", 2],
+  ["zwei", 2],
+  ["3", 3],
+  ["drei", 3],
+  ["4", 4],
+  ["vier", 4],
+  ["5", 5],
+  ["funf", 5],
+  ["fuenf", 5],
+]);
 
 function isBlackKey(midi: number) {
   return [1, 3, 6, 8, 10].includes(midi % 12);
@@ -296,10 +342,150 @@ function groupNotesByStart(notes: PianoNote[]) {
   return Array.from(groups.values()).sort((left, right) => left[0].start - right[0].start);
 }
 
+function fingeringGroupId(start: number) {
+  return `onset-${Math.round(start * 100)}`;
+}
+
+function createFingeringGroups(song: Song): FingeringGroup[] {
+  return groupNotesByStart(song.notes).map((notes) => {
+    const start = notes[0].start;
+    const sortedNotes = [...notes].sort((left, right) => left.midi - right.midi);
+
+    return {
+      bar: timeToMeasure(start, song),
+      id: fingeringGroupId(start),
+      leftNotes: sortedNotes.filter((note) => note.hand === "left"),
+      notes: sortedNotes,
+      rightNotes: sortedNotes.filter((note) => note.hand === "right"),
+      start,
+    };
+  });
+}
+
+function firstFingeringGroupInBar(groups: FingeringGroup[], bar: number) {
+  return groups.find((group) => group.bar === bar) ?? null;
+}
+
+function nextBarStartGroup(groups: FingeringGroup[], currentGroup: FingeringGroup, song: Song) {
+  for (let bar = currentGroup.bar + 1; bar <= song.measures; bar += 1) {
+    const group = firstFingeringGroupInBar(groups, bar);
+
+    if (group) {
+      return group;
+    }
+  }
+
+  return null;
+}
+
+function nextFingeringGroup(
+  groups: FingeringGroup[],
+  currentGroup: FingeringGroup,
+  mode: FingeringMode,
+  detailBar: number | null,
+  song: Song,
+) {
+  if (mode === "bar-start") {
+    return nextBarStartGroup(groups, currentGroup, song);
+  }
+
+  const currentIndex = groups.findIndex((group) => group.id === currentGroup.id);
+  const nextGroup = currentIndex === -1 ? null : groups[currentIndex + 1] ?? null;
+
+  if (detailBar !== null && nextGroup?.bar !== detailBar) {
+    return null;
+  }
+
+  return nextGroup;
+}
+
+function parseFingerList(command: string): FingerNumber[] {
+  return command
+    .split(/\s+/)
+    .map((part) => numberWordToFinger.get(part))
+    .filter((finger): finger is FingerNumber => finger !== undefined);
+}
+
+function parseFingerCommand(command: string) {
+  if (command.includes("links") || command.includes("linke hand") || command.includes("rechts") || command.includes("rechte hand")) {
+    const left: FingerNumber[] = [];
+    const right: FingerNumber[] = [];
+    const tokens = command.split(/\s+/);
+    let target: NoteHand | null = null;
+
+    for (let index = 0; index < tokens.length; index += 1) {
+      const token = tokens[index];
+
+      if (token === "links" || token === "linke") {
+        target = "left";
+        if (tokens[index + 1] === "hand") index += 1;
+        continue;
+      }
+
+      if (token === "rechts" || token === "rechte") {
+        target = "right";
+        if (tokens[index + 1] === "hand") index += 1;
+        continue;
+      }
+
+      const finger = numberWordToFinger.get(token);
+
+      if (finger && target === "left") {
+        left.push(finger);
+      }
+
+      if (finger && target === "right") {
+        right.push(finger);
+      }
+    }
+
+    return { left, right };
+  }
+
+  const parts = command.split(/\s+(?:und|plus)\s+/);
+
+  if (parts.length > 1) {
+    return {
+      left: parseFingerList(parts[0]),
+      right: parseFingerList(parts.slice(1).join(" ")),
+    };
+  }
+
+  const fingers = parseFingerList(command);
+
+  return fingers.length > 0 ? { left: fingers, right: [] } : null;
+}
+
+function sanitizeFingerAnnotation(value: unknown): FingerAnnotation | null {
+  const annotation = value as Partial<FingerAnnotation>;
+
+  if (
+    annotation &&
+    typeof annotation.noteId === "string" &&
+    (annotation.hand === "left" || annotation.hand === "right") &&
+    (annotation.finger === 1 ||
+      annotation.finger === 2 ||
+      annotation.finger === 3 ||
+      annotation.finger === 4 ||
+      annotation.finger === 5)
+  ) {
+    return {
+      finger: annotation.finger,
+      hand: annotation.hand,
+      noteId: annotation.noteId,
+      source: annotation.source === "manual" || annotation.source === "auto" ? annotation.source : "voice",
+      updatedAt: typeof annotation.updatedAt === "number" ? annotation.updatedAt : Date.now(),
+    };
+  }
+
+  return null;
+}
+
 function VexScore({
   activeNoteIds,
   notes,
   onLayout,
+  selectedNoteIds,
   song,
   upcomingNoteIds,
   viewEnd,
@@ -308,6 +494,7 @@ function VexScore({
   activeNoteIds: Set<string>;
   notes: PianoNote[];
   onLayout: (layout: SheetLayout) => void;
+  selectedNoteIds: Set<string>;
   song: Song;
   upcomingNoteIds: Set<string>;
   viewEnd: number;
@@ -353,10 +540,13 @@ function VexScore({
           keys: [...group].sort((left, right) => left.midi - right.midi).map((note) => vexNoteKey(note.midi)),
         });
         const isActive = group.some((note) => activeNoteIds.has(note.id));
+        const isSelected = group.some((note) => selectedNoteIds.has(note.id));
         const isUpcoming = !isActive && group.some((note) => upcomingNoteIds.has(note.id));
 
         if (isActive) {
           staveNote.setStyle({ fillStyle: hand === "left" ? "#72a7d8" : "#8bdc48", strokeStyle: hand === "left" ? "#72a7d8" : "#8bdc48" });
+        } else if (isSelected) {
+          staveNote.setStyle({ fillStyle: "#b83b2d", strokeStyle: "#b83b2d" });
         } else if (isUpcoming) {
           staveNote.setStyle({ fillStyle: "#d99416", strokeStyle: "#d99416" });
         }
@@ -399,7 +589,7 @@ function VexScore({
 
     drawHand("right", treble, "treble");
     drawHand("left", bass, "bass");
-  }, [activeNoteIds, notes, onLayout, song, upcomingNoteIds, viewEnd, viewStart]);
+  }, [activeNoteIds, notes, onLayout, selectedNoteIds, song, upcomingNoteIds, viewEnd, viewStart]);
 
   return <div className="vex-score" ref={containerRef} />;
 }
@@ -445,6 +635,10 @@ function songStorageKey(song: Song) {
   return `${practiceStoragePrefix}${song.name}:${song.notes.length}:${song.measures}:${song.tempo}`;
 }
 
+function fingeringStorageKey(song: Song) {
+  return `${fingeringStoragePrefix}${song.name}:${song.notes.length}:${song.measures}:${song.tempo}`;
+}
+
 function sanitizeHandMode(value: unknown): HandMode {
   return value === "left" || value === "right" || value === "both" ? value : "both";
 }
@@ -481,6 +675,39 @@ function writePracticeSettings(song: Song, settings: PracticeSettings) {
   }
 }
 
+function readFingerings(song: Song): FingeringMap {
+  try {
+    const rawValue = window.localStorage.getItem(fingeringStorageKey(song));
+
+    if (!rawValue) {
+      return {};
+    }
+
+    const parsedValue = JSON.parse(rawValue) as Record<string, unknown>;
+    const nextFingerings: FingeringMap = {};
+
+    Object.entries(parsedValue).forEach(([noteId, value]) => {
+      const annotation = sanitizeFingerAnnotation(value);
+
+      if (annotation) {
+        nextFingerings[noteId] = annotation;
+      }
+    });
+
+    return nextFingerings;
+  } catch {
+    return {};
+  }
+}
+
+function writeFingerings(song: Song, fingerings: FingeringMap) {
+  try {
+    window.localStorage.setItem(fingeringStorageKey(song), JSON.stringify(fingerings));
+  } catch {
+    // Local storage is optional; the app should still work without it.
+  }
+}
+
 function App() {
   const [song, setSong] = React.useState<Song | null>(null);
   const [isPlaying, setIsPlaying] = React.useState(false);
@@ -499,6 +726,11 @@ function App() {
   const [sheetLayout, setSheetLayout] = React.useState<SheetLayout | null>(null);
   const [voiceListening, setVoiceListening] = React.useState(false);
   const [voiceStatus, setVoiceStatus] = React.useState("Sprachsteuerung bereit");
+  const [fingerings, setFingerings] = React.useState<FingeringMap>({});
+  const [fingeringMode, setFingeringMode] = React.useState<FingeringMode>("bar-start");
+  const [fingeringDetailBar, setFingeringDetailBar] = React.useState<number | null>(null);
+  const [fingeringMessage, setFingeringMessage] = React.useState("Bereit fuer Fingersatz-Anker.");
+  const [selectedFingeringGroupId, setSelectedFingeringGroupId] = React.useState<string | null>(null);
   const sheetDragRef = React.useRef<{ startTime: number; startX: number; width: number } | null>(null);
   const recognitionRef = React.useRef<BrowserSpeechRecognition | null>(null);
   const samplerRef = React.useRef<Tone.Sampler | null>(null);
@@ -512,8 +744,14 @@ function App() {
       const nextFromBar = clamp(savedSettings?.fromBar ?? 1, 1, parsedSong.measures);
       const nextToBar = clamp(savedSettings?.toBar ?? Math.min(parsedSong.measures, 4), nextFromBar, parsedSong.measures);
       const nextCurrentTime = clamp(savedSettings?.currentTime ?? 0, 0, parsedSong.duration);
+      const firstFingeringGroup = firstFingeringGroupInBar(createFingeringGroups(parsedSong), nextFromBar);
 
       setSong(parsedSong);
+      setFingerings(readFingerings(parsedSong));
+      setFingeringMode("bar-start");
+      setFingeringDetailBar(null);
+      setFingeringMessage("Bereit fuer Taktanfaenge.");
+      setSelectedFingeringGroupId(firstFingeringGroup?.id ?? null);
       setTempo(clamp(savedSettings?.tempo ?? parsedSong.tempo, 20, 220));
       setFromBar(nextFromBar);
       setToBar(nextToBar);
@@ -689,6 +927,20 @@ function App() {
     setSavedAt(Date.now());
   }, [currentTime, fromBar, handMode, isPlaying, loop, song, tempo, toBar]);
 
+  React.useEffect(() => {
+    if (!song) {
+      return;
+    }
+
+    writeFingerings(song, fingerings);
+  }, [fingerings, song]);
+
+  const fingeringGroups = song ? createFingeringGroups(song) : [];
+  const fallbackFingeringGroup = firstFingeringGroupInBar(fingeringGroups, currentBar) ?? fingeringGroups[0] ?? null;
+  const selectedFingeringGroup =
+    fingeringGroups.find((group) => group.id === selectedFingeringGroupId) ?? fallbackFingeringGroup;
+  const selectedFingeringNoteIds = new Set(selectedFingeringGroup?.notes.map((note) => note.id) ?? []);
+  const completedFingeringCount = Object.keys(fingerings).length;
   const visibleNotes =
     song?.notes.filter((note) => {
       const handMatches =
@@ -729,6 +981,50 @@ function App() {
   );
   const allKeys = Array.from({ length: keyboardEnd - keyboardStart + 1 }, (_, index) => keyboardStart + index);
   const sheetNoteTrackWidth = sheetLayout ? Math.max(sheetLayout.noteEndX - sheetLayout.noteStartX, 1) : null;
+  const selectedFingeringProgress =
+    selectedFingeringGroup && selectedFingeringGroup.start >= sheetViewStart && selectedFingeringGroup.start <= sheetViewEnd
+      ? clamp((selectedFingeringGroup.start - sheetViewStart) / sheetViewDuration, 0, 1)
+      : null;
+  const fingeredBars = new Set(
+    Object.values(fingerings)
+      .map((annotation) => song?.notes.find((note) => note.id === annotation.noteId))
+      .filter((note): note is PianoNote => note !== undefined)
+      .map((note) => (song ? timeToMeasure(note.start, song) : 1)),
+  );
+  const fingeringStatus = selectedFingeringGroup
+    ? `${barLabel(selectedFingeringGroup.bar)} ${fingeringMode === "detail" ? "Detail" : "Anfang"}`
+    : "Kein Fingersatz-Anker";
+  const selectedFingeringLabel = selectedFingeringGroup
+    ? [
+        selectedFingeringGroup.leftNotes.length > 0 ? `L ${selectedFingeringGroup.leftNotes.length}` : null,
+        selectedFingeringGroup.rightNotes.length > 0 ? `R ${selectedFingeringGroup.rightNotes.length}` : null,
+      ]
+        .filter(Boolean)
+        .join(" | ")
+    : "";
+  const sheetFingeringLabels = sheetNotes
+    .map((note) => {
+      const annotation = fingerings[note.id];
+
+      if (!annotation) {
+        return null;
+      }
+
+      const sameHandGroup = sheetNotes
+        .filter((candidate) => Math.round(candidate.start * 100) === Math.round(note.start * 100) && candidate.hand === note.hand)
+        .sort((left, right) => left.midi - right.midi);
+      const noteIndex = Math.max(0, sameHandGroup.findIndex((candidate) => candidate.id === note.id));
+      const progress = clamp((note.start - sheetViewStart) / sheetViewDuration, 0, 1);
+
+      return {
+        finger: annotation.finger,
+        hand: note.hand,
+        id: note.id,
+        left: sheetOverlayLeft(progress),
+        xOffset: noteIndex * 14,
+      };
+    })
+    .filter((label): label is { finger: FingerNumber; hand: NoteHand; id: string; left: string; xOffset: number } => label !== null);
 
   function sheetOverlayLeft(progress: number) {
     if (sheetLayout && sheetNoteTrackWidth !== null) {
@@ -933,9 +1229,159 @@ function App() {
     setPracticeRange(fromBar, bar);
   }
 
+  function selectFingeringBar(bar: number, mode: FingeringMode) {
+    if (!song) {
+      return false;
+    }
+
+    const clampedBar = clamp(bar, 1, song.measures);
+    const group = firstFingeringGroupInBar(fingeringGroups, clampedBar);
+
+    setPracticeRange(clampedBar, clampedBar);
+    setManualSheetStart(measureToTime(clampedBar, song));
+    setFingeringMode(mode);
+    setFingeringDetailBar(mode === "detail" ? clampedBar : null);
+    setSelectedFingeringGroupId(group?.id ?? null);
+
+    return group !== null;
+  }
+
+  function moveFingeringCursor(direction: -1 | 1) {
+    if (!song || !selectedFingeringGroup) {
+      return;
+    }
+
+    const currentIndex = fingeringGroups.findIndex((group) => group.id === selectedFingeringGroup.id);
+    const nextGroup =
+      direction === 1
+        ? nextFingeringGroup(fingeringGroups, selectedFingeringGroup, fingeringMode, fingeringDetailBar, song)
+        : fingeringGroups[Math.max(0, currentIndex - 1)] ?? null;
+
+    if (!nextGroup) {
+      if (direction === 1 && fingeringMode === "detail" && fingeringDetailBar !== null) {
+        setFingeringMessage(`Takt ${fingeringDetailBar} fertig. Sag "nur Anfang" oder waehle den naechsten Takt.`);
+        setVoiceStatus(`Fingersatz: Takt ${fingeringDetailBar} fertig`);
+        return;
+      }
+
+      setFingeringMessage("Kein weiterer Fingersatz-Anker gefunden.");
+      setVoiceStatus("Kein weiterer Fingersatz-Anker gefunden.");
+      return;
+    }
+
+    setSelectedFingeringGroupId(nextGroup.id);
+    setCurrentTime(nextGroup.start);
+    setPracticeRange(nextGroup.bar, nextGroup.bar);
+    setManualSheetStart(measureToTime(nextGroup.bar, song));
+  }
+
+  function resolveFingerAssignments(leftFingers: FingerNumber[], rightFingers: FingerNumber[]) {
+    if (!selectedFingeringGroup) {
+      return { left: leftFingers, right: rightFingers };
+    }
+
+    const hasLeftNotes = selectedFingeringGroup.leftNotes.length > 0;
+    const hasRightNotes = selectedFingeringGroup.rightNotes.length > 0;
+
+    if (hasLeftNotes && !hasRightNotes && rightFingers.length > 0) {
+      return { left: [...leftFingers, ...rightFingers], right: [] };
+    }
+
+    if (!hasLeftNotes && hasRightNotes && leftFingers.length > 0) {
+      return { left: [], right: [...leftFingers, ...rightFingers] };
+    }
+
+    return { left: leftFingers, right: rightFingers };
+  }
+
+  function applyFingeringsToCurrentGroup(
+    leftFingers: FingerNumber[],
+    rightFingers: FingerNumber[],
+    source: FingeringSource,
+  ): FingerAssignmentResult | null {
+    if (!song || !selectedFingeringGroup) {
+      return null;
+    }
+
+    const resolvedFingers = resolveFingerAssignments(leftFingers, rightFingers);
+    const assignedAt = Date.now();
+    const nextGroup = nextFingeringGroup(fingeringGroups, selectedFingeringGroup, fingeringMode, fingeringDetailBar, song);
+    const applyHand = (notes: PianoNote[], fingers: FingerNumber[], hand: NoteHand, nextFingerings: FingeringMap) => {
+      notes.slice(0, fingers.length).forEach((note, index) => {
+        nextFingerings[note.id] = {
+          finger: fingers[index],
+          hand,
+          noteId: note.id,
+          source,
+          updatedAt: assignedAt,
+        };
+      });
+    };
+
+    setFingerings((currentFingerings) => {
+      const nextFingerings = { ...currentFingerings };
+
+      applyHand(selectedFingeringGroup.leftNotes, resolvedFingers.left, "left", nextFingerings);
+      applyHand(selectedFingeringGroup.rightNotes, resolvedFingers.right, "right", nextFingerings);
+
+      return nextFingerings;
+    });
+
+    window.setTimeout(() => moveFingeringCursor(1), 0);
+    return {
+      assignedCount:
+        Math.min(selectedFingeringGroup.leftNotes.length, resolvedFingers.left.length) +
+        Math.min(selectedFingeringGroup.rightNotes.length, resolvedFingers.right.length),
+      leftFingers: resolvedFingers.left,
+      nextGroup,
+      rightFingers: resolvedFingers.right,
+    };
+  }
+
+  function finishCurrentFingeringBar() {
+    if (!song || !selectedFingeringGroup) {
+      return;
+    }
+
+    const nextGroup = nextBarStartGroup(fingeringGroups, selectedFingeringGroup, song);
+
+    setFingeringMode("bar-start");
+    setFingeringDetailBar(null);
+
+    if (!nextGroup) {
+      setFingeringMessage(`Takt ${selectedFingeringGroup.bar} fertig. Kein weiterer Taktanfang gefunden.`);
+      setVoiceStatus(`Fingersatz: Takt ${selectedFingeringGroup.bar} fertig`);
+      return;
+    }
+
+    setSelectedFingeringGroupId(nextGroup.id);
+    setCurrentTime(nextGroup.start);
+    setPracticeRange(nextGroup.bar, nextGroup.bar);
+    setManualSheetStart(measureToTime(nextGroup.bar, song));
+    setFingeringMessage(`Takt ${selectedFingeringGroup.bar} fertig. Naechster Taktanfang: ${barLabel(nextGroup.bar)}.`);
+    setVoiceStatus(`Fingersatz: ${barLabel(nextGroup.bar)} Anfang`);
+  }
+
+  function deleteCurrentFingerings() {
+    if (!selectedFingeringGroup) {
+      return;
+    }
+
+    setFingerings((currentFingerings) => {
+      const nextFingerings = { ...currentFingerings };
+
+      selectedFingeringGroup.notes.forEach((note) => {
+        delete nextFingerings[note.id];
+      });
+
+      return nextFingerings;
+    });
+  }
+
   function applyVoiceCommand(rawCommand: string) {
     const command = normalizeVoiceCommand(rawCommand);
     const rangeMatch = command.match(/(?:takt|takte)?\s*(\d+)\s*(?:bis|-)\s*(\d+)/);
+    const detailBarMatch = command.match(/(?:takt|takte)\s*(\d+)\s*(?:ganz|detail|alle)/);
     const speedMatch = command.match(/(?:speed|tempo)\s*(\d+)/);
     const singleBarMatch = command.match(/(?:takt|takte)\s*(\d+)/);
 
@@ -955,7 +1401,21 @@ function App() {
       return;
     }
 
-    if (command.includes("takt vor") || command.includes("weiter")) {
+    if (command === "weiter" || command.includes("naechste") || command.includes("nachste")) {
+      moveFingeringCursor(1);
+      setFingeringMessage("Zum naechsten Fingersatz-Anker gesprungen.");
+      setVoiceStatus(`Fingersatz: weiter`);
+      return;
+    }
+
+    if (command === "zuruck" || command === "zurueck") {
+      moveFingeringCursor(-1);
+      setFingeringMessage("Zum vorherigen Fingersatz-Anker gesprungen.");
+      setVoiceStatus(`Fingersatz: zurueck`);
+      return;
+    }
+
+    if (command.includes("takt vor")) {
       jumpMeasure(1);
       setVoiceStatus(`Befehl: ${rawCommand}`);
       return;
@@ -964,6 +1424,26 @@ function App() {
     if (command.includes("takt zuruck") || command.includes("zurueck")) {
       jumpMeasure(-1);
       setVoiceStatus(`Befehl: ${rawCommand}`);
+      return;
+    }
+
+    if (command.includes("loschen") || command.includes("loeschen")) {
+      deleteCurrentFingerings();
+      setFingeringMessage("Fingersatz am aktuellen Anker geloescht.");
+      setVoiceStatus(`Fingersatz geloescht`);
+      return;
+    }
+
+    if (command.includes("nur anfang")) {
+      setFingeringMode("bar-start");
+      setFingeringDetailBar(null);
+      setFingeringMessage("Aufnahme auf Taktanfaenge begrenzt.");
+      setVoiceStatus("Fingersatz: nur Taktanfaenge");
+      return;
+    }
+
+    if (command.includes("takt fertig")) {
+      finishCurrentFingeringBar();
       return;
     }
 
@@ -979,10 +1459,21 @@ function App() {
       return;
     }
 
+    if (detailBarMatch) {
+      const bar = Number(detailBarMatch[1]);
+      const foundGroup = selectFingeringBar(bar, "detail");
+
+      setFingeringMessage(foundGroup ? `Detailaufnahme fuer Takt ${bar} laeuft.` : `Keine Note in Takt ${bar}.`);
+      setVoiceStatus(foundGroup ? `Fingersatz: Takt ${bar} ganz` : `Keine Note in Takt ${bar}`);
+      return;
+    }
+
     if (singleBarMatch) {
       const bar = Number(singleBarMatch[1]);
-      setPracticeRange(bar, bar);
-      setVoiceStatus(`Befehl: ${rawCommand}`);
+      const foundGroup = selectFingeringBar(bar, "bar-start");
+
+      setFingeringMessage(foundGroup ? `Taktanfang ${bar} aktiv.` : `Keine Note in Takt ${bar}.`);
+      setVoiceStatus(foundGroup ? `Fingersatz: Takt ${bar} Anfang` : `Keine Note in Takt ${bar}`);
       return;
     }
 
@@ -1025,6 +1516,37 @@ function App() {
     if (command.includes("halbieren")) {
       setTempo((value) => Math.max(20, Math.round(value / 2)));
       setVoiceStatus(`Befehl: ${rawCommand}`);
+      return;
+    }
+
+    const fingerCommand = parseFingerCommand(command);
+
+    if (fingerCommand && (fingerCommand.left.length > 0 || fingerCommand.right.length > 0)) {
+      const result = applyFingeringsToCurrentGroup(fingerCommand.left, fingerCommand.right, "voice");
+      const leftLabel = result && result.leftFingers.length > 0 ? result.leftFingers.join(" ") : "-";
+      const rightLabel = result && result.rightFingers.length > 0 ? result.rightFingers.join(" ") : "-";
+      const nextLabel = result?.nextGroup ? `${barLabel(result.nextGroup.bar)}` : "Ende";
+
+      if (!result) {
+        setFingeringMessage("Kein Fingersatz-Anker aktiv.");
+        setVoiceStatus("Kein Fingersatz-Anker aktiv");
+        return;
+      }
+
+      const detailFinished =
+        fingeringMode === "detail" &&
+        fingeringDetailBar !== null &&
+        result.nextGroup === null;
+
+      if (result.assignedCount === 0) {
+        setFingeringMessage("Erkannt, aber an diesem Anker passte keine Note zur genannten Hand.");
+      } else if (detailFinished) {
+        setFingeringMessage(`Gespeichert. Takt ${fingeringDetailBar} fertig.`);
+      } else {
+        setFingeringMessage(`Gespeichert. Naechster Anker: ${nextLabel}.`);
+      }
+
+      setVoiceStatus(`Fingersatz: L ${leftLabel} | R ${rightLabel}`);
       return;
     }
 
@@ -1257,6 +1779,53 @@ function App() {
             </div>
           </div>
 
+          <div className="field fingering-panel">
+            <span>Fingersatz</span>
+            <div className="segmented fingering-mode-toggle">
+              <button
+                className={fingeringMode === "bar-start" ? "selected" : ""}
+                disabled={!song}
+                onClick={() => {
+                  setFingeringMode("bar-start");
+                  setFingeringDetailBar(null);
+                }}
+              >
+                Anfang
+              </button>
+              <button
+                className={fingeringMode === "detail" ? "selected" : ""}
+                disabled={!song}
+                onClick={() => {
+                  if (song) {
+                    setFingeringMode("detail");
+                    setFingeringDetailBar(selectedFingeringGroup?.bar ?? currentBar);
+                  }
+                }}
+              >
+                Takt
+              </button>
+            </div>
+            <div className="fingering-status">
+              <strong>{fingeringStatus}</strong>
+              <span>{selectedFingeringLabel || "Keine Note gewaehlt"}</span>
+              <span>{completedFingeringCount} Finger gespeichert</span>
+              <span>{fingeringMessage}</span>
+            </div>
+            <div className="range-nav">
+              <button disabled={!song || !selectedFingeringGroup} onClick={() => moveFingeringCursor(-1)}>
+                <ChevronLeft size={18} />
+                Zurueck
+              </button>
+              <button disabled={!song || !selectedFingeringGroup} onClick={() => moveFingeringCursor(1)}>
+                Weiter
+                <ChevronRight size={18} />
+              </button>
+            </div>
+            <button className="secondary-action" disabled={!selectedFingeringGroup} onClick={deleteCurrentFingerings}>
+              Loeschen
+            </button>
+          </div>
+
           <label className="toggle">
             <input type="checkbox" checked={loop} onChange={(event) => setLoop(event.target.checked)} />
             <Repeat2 size={18} />
@@ -1290,6 +1859,8 @@ function App() {
                   bar === fromBar ? "range-start" : "",
                   bar === toBar ? "range-end" : "",
                   bar === currentBar ? "current-bar" : "",
+                  bar === selectedFingeringGroup?.bar ? "fingering-bar" : "",
+                  fingeredBars.has(bar) ? "fingered-bar" : "",
                 ]
                   .filter(Boolean)
                   .join(" ")}
@@ -1324,6 +1895,7 @@ function App() {
                 activeNoteIds={activeNoteIds}
                 notes={sheetNotes}
                 onLayout={handleSheetLayout}
+                selectedNoteIds={selectedFingeringNoteIds}
                 song={song}
                 upcomingNoteIds={upcomingNoteIds}
                 viewEnd={sheetViewEnd}
@@ -1339,6 +1911,27 @@ function App() {
             />
             <div className="sheet-playhead" style={{ left: sheetOverlayLeft(sheetPlayheadProgress) }} aria-hidden="true">
               <span />
+            </div>
+            {selectedFingeringProgress !== null && (
+              <div
+                className="fingering-cursor"
+                style={{ left: sheetOverlayLeft(selectedFingeringProgress) }}
+                aria-hidden="true"
+              />
+            )}
+            <div className="fingering-labels" aria-hidden="true">
+              {sheetFingeringLabels.map((label) => (
+                <span
+                  key={`finger-${label.id}`}
+                  className={label.hand}
+                  style={{
+                    left: label.left,
+                    transform: `translateX(${label.xOffset - 6}px)`,
+                  }}
+                >
+                  {label.finger}
+                </span>
+              ))}
             </div>
             <div className="bar-lines" aria-hidden="true">
               {song &&

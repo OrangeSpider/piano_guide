@@ -86,7 +86,7 @@ Aufgaben:
 
 ## Phase 7: Notenbild und Fingersatz
 
-Status: Notenbild als erster Prototyp umgesetzt, Fingersatz noch offen.
+Status: Notenbild als erster Prototyp umgesetzt, Fingersatz-Anker per UI und Sprache grundlegend umgesetzt.
 
 Ergebnis:
 Die App bietet eine lernnahe Darstellung mit Noten, Takten und Fingersatz.
@@ -96,8 +96,11 @@ Aufgaben:
 - Notenbild synchron zur Wiedergabe anzeigen: grundlegend umgesetzt
 - Fallnoten-Ansicht als zusaetzliche Lernansicht: erster Prototyp umgesetzt
 - Horizontales Fokusfenster im Notenbereich verschiebbar machen: umgesetzt
-- Fingersatzdatenmodell anlegen: offen
-- Fingersatz je Note erfassen und speichern: offen
+- Fingersatzdatenmodell anlegen: umgesetzt
+- Fingersatz je Note erfassen und speichern: grundlegend umgesetzt
+- Sparse Fingersatz-Anker fuer Taktanfaenge erfassen: umgesetzt
+- Detailmodus fuer alle sinnvollen Notengruppen im Takt erfassen: umgesetzt
+- Sprachbefehle fuer Fingersatz-Anker und Fingerfolgen auswerten: grundlegend umgesetzt
 
 ## Phase 8: Naechste sinnvolle Schritte
 
@@ -107,6 +110,8 @@ Der Prototyp wird von einer starken Demo zu einem belastbaren Uebe-Werkzeug.
 Aufgaben:
 - Taktberechnung robuster machen bei wechselnden Time-Signatures und mehreren Tempo-Events
 - Rechte/linke Hand sauberer trennen, auch bei einspurigen oder komplexen MIDI-Dateien
-- Fingersatz erfassen, speichern und im Notenbild anzeigen
+- Fingersatzanzeige im Notenbild rhythmisch/optisch verfeinern
+- Manuelle Fingersatz-Korrektur direkt an Noten und per Tastatur ausbauen
+- Automatische Fingersatz-Vorschlaege evaluieren
 - Mobile Bedienung fuer Android-Smartphone und Tablet gezielt optimieren
 - Browser- und Geraetetests fuer Audio, Touch und Speech Recognition systematisch nachziehen

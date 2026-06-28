@@ -57,13 +57,15 @@ Bereits umgesetzt:
 - Sprachsteuerung im Browser fuer zentrale Befehle
 - Notenbild-Prototyp auf Basis von `vexflow`
 - Fallnoten-Ansicht als zusaetzliche Lernansicht
+- Sparse Fingersatz-Erfassung fuer Taktanfaenge und schwierige Takt-Details
+- Sprachbefehle fuer Fingersatz-Anker, Detailmodus und Fingerfolgen
 
 ## Erweiterungen
 
 - Robuste Taktberechnung bei Tempo- und Taktartwechseln
 - Praezisere automatische Hand-Zuordnung bei komplexen MIDI-Dateien
 - Notenbild mit staerkerer rhythmischer Genauigkeit und besserem Layout
-- Fingersatz manuell erfassen und speichern
+- Fingersatz direkt im Notenbild und per Tastatur korrigieren
 - Automatische Fingersatz-Vorschlaege
 - Mobile Optimierung fuer Smartphone und Tablet
 - Systematische Browser- und Geraetetests fuer Audio, Touch und Speech Recognition
@@ -88,6 +90,12 @@ Bereits vorgesehen und grundlegend umgesetzt:
 - Schneller
 - Langsamer
 - Halbieren
+- Takt X ganz
+- Nur Anfang
+- Weiter / Zurueck
+- Takt fertig
+- Loeschen
+- Fingerfolgen wie `3 1 und 1` oder `links 3 1 rechts 1`
 
 ## Erfolgskriterium fuer den ersten Prototyp
 
